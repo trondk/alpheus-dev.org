@@ -1,0 +1,14 @@
+{{ define "main" }}
+{{ $phase := index hugo.Data.phases site.Params.phase }}
+<h1>{{ site.Title }}</h1>
+<p class="lede">{{ .Description }}</p>
+<p class="phase"><strong>Status: {{ $phase.name }}.</strong> {{ $phase.short }} <a href="#status">What that means</a></p>
+
+{{ partial "river.html" . }}
+
+{{ .Content }}
+
+<h2 id="status">Status</h2>
+<p><strong>{{ $phase.name | strings.FirstUpper }}.</strong> {{ $phase.long }}</p>
+<p>See the <a href="{{ site.Params.repo }}#roadmap">roadmap</a> and the <a href="{{ "releases/" | relURL }}">release notes</a>.</p>
+{{ end }}

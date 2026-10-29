@@ -1,0 +1,24 @@
+{{/* Vanity import page for the Go module (WWW-17, WWW-18, WWW-19). */}}
+{{ define "head" }}
+{{ $repo := site.Params.repo }}
+{{ $branch := site.Params.repoBranch }}
+{{ $tree := printf "%s/src/branch/%s" $repo $branch }}
+{{ $blob := $tree }}
+{{ if strings.Contains $repo "github.com" }}
+  {{ $tree = printf "%s/tree/%s" $repo $branch }}
+  {{ $blob = printf "%s/blob/%s" $repo $branch }}
+{{ end }}
+<meta name="go-import" content="{{ site.Params.goModule }} git {{ $repo }}">
+<meta name="go-source" content="{{ site.Params.goModule }} {{ $repo }} {{ $tree }}{/dir} {{ $blob }}{/dir}/{file}#L{line}">
+{{ end }}
+
+{{ define "main" }}
+{{ $pkg := .Params.package | default site.Params.goModule }}
+<h1 class="vanity">{{ $pkg }}</h1>
+<p>This is the import path of a Go package in Alpheus.</p>
+<pre tabindex="0"><code>import "{{ $pkg }}"</code></pre>
+<ul>
+  <li><a href="https://pkg.go.dev/{{ $pkg }}">Documentation on pkg.go.dev</a></li>
+  <li><a href="{{ site.Params.repo }}">Source code</a></li>
+</ul>
+{{ end }}

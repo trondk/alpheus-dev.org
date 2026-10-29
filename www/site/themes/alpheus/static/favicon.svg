@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<style>
+  .h { stroke: #80857D; }
+  .a { stroke: #1F6E6C; }
+  .u { stroke: #0F4A55; }
+  @media (prefers-color-scheme: dark) {
+    .a { stroke: #5FC2BD; }
+    .u { stroke: #7FB8C2; }
+  }
+</style>
+<g fill="none" stroke-width="3" stroke-linecap="round">
+  <line class="h" x1="1" y1="16" x2="31" y2="16" stroke-width="1.5"/>
+  <path class="a" d="M2 9 H8 C10 9 10 16 12 22"/>
+  <path class="u" d="M14 24 H18" />
+  <path class="a" d="M20 22 C22 16 22 9 24 9 H30"/>
+</g>
+</svg>

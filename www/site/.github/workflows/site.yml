@@ -1,0 +1,126 @@
+# Build, test and publish alpheus-dev.org (SPEC.md, section 6).
+# This file belongs at the root of the repository alpheus-dev/alpheus-dev.org (WWW-22).
+
+name: Site
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Sent by the main repository on push to main and on each release (WWW-23).
+  repository_dispatch:
+    types: [alpheus-main, alpheus-release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && github.ref || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Pinned Hugo (WWW-21). Keep in step with module.hugoVersion in hugo.toml.
+  HUGO_VERSION: 0.168.0
+  HUGO_SHA256: fada83ad56bb27ed4cb7dd81590303bdac16140f944ac4e66fc248117e2d5594
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Hugo
+        run: |
+          file="hugo_${HUGO_VERSION}_linux-amd64.tar.gz"
+          curl -fsSLO "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/${file}"
+          echo "${HUGO_SHA256}  ${file}" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/hugo"
+          tar -xzf "$file" -C "$RUNNER_TEMP/hugo" hugo
+          echo "$RUNNER_TEMP/hugo" >> "$GITHUB_PATH"
+
+      - name: Check colour contrast (WWW-9, WWW-41)
+        run: python3 -I ci/check_contrast.py
+
+      - name: Build
+        run: hugo --gc --minify
+
+      - name: Check external resources and front page weight (WWW-25, WWW-26)
+        run: python3 -I ci/check_site.py
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Accessibility test with axe (WWW-34)
+        run: |
+          python3 -m http.server 8080 --bind 127.0.0.1 -d public &
+          sleep 1
+          npx --yes pa11y-ci@4.1.1 --config ci/pa11yci.json
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "1"
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+
+      - name: Lighthouse (WWW-27)
+        run: npx --yes @lhci/cli@0.15.1 autorun --config=ci/lighthouserc.json
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: public
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Vanity import pages answer go-get (WWW-17)
+        run: |
+          module=alpheus-dev.org/alpheus
+          paths=$(python3 -I -c 'import tomllib; print(" ".join(tomllib.load(open("data/gopackages.toml", "rb"))["packages"]))')
+          for path in "" $paths; do
+            url="https://${module}${path:+/$path}?go-get=1"
+            # Pages can take a moment to serve the new version.
+            for attempt in 1 2 3 4 5 6; do
+              if curl -fsSL "$url" | grep -Eq "name=\"?go-import\"? content=\"${module} git "; then
+                echo "ok   $url"; continue 2
+              fi
+              sleep 10
+            done
+            echo "FAIL $url has no go-import tag"; exit 1
+          done
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: vars.GO_MODULE_PUBLISHED == 'true'
+        with:
+          go-version: stable
+          cache: false
+
+      # Straight from the site, not proxy.golang.org's cache (WWW-20).
+      # Turned on with the repository variable GO_MODULE_PUBLISHED once the module has code.
+      - name: go list against the published site (WWW-20)
+        if: vars.GO_MODULE_PUBLISHED == 'true'
+        run: |
+          export GOMODCACHE="$(mktemp -d)"
+          go list -m alpheus-dev.org/alpheus@latest
+        env:
+          GOPROXY: direct
+          GONOSUMDB: alpheus-dev.org
+          GOFLAGS: -modcacherw
