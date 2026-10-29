@@ -21,10 +21,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 )
 
 // ManifestVersion is the manifest format this package reads and writes.
 const ManifestVersion = 1
+
+// MaxUnits is how many counter units a step can have (GO-114).
+const MaxUnits = 16
+
+var unitPattern = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+
+// ValidUnit reports whether unit can name a counter: lower-case letters,
+// digits and _, at most 32 (GO-114).
+func ValidUnit(unit string) bool { return unitPattern.MatchString(unit) }
 
 // SegmentSize is how many chunks manifest.json holds before they are sealed
 // into a segment (GO-32). Every sealed segment holds exactly this many.
@@ -59,9 +69,6 @@ type Manifest struct {
 	// Epoch is the attempt number of the agent that wrote the manifest
 	// (GO-67).
 	Epoch int64 `json:"epoch"`
-	// Schema is the hash of the Arrow schema of every chunk in the stream,
-	// empty until the first chunk.
-	Schema string `json:"schema"`
 	// Segments are the sealed segments, oldest first (GO-32).
 	Segments []string `json:"segments"`
 	// Chunks are the committed chunks that are not sealed yet.
@@ -75,12 +82,16 @@ type Manifest struct {
 	Last *int64 `json:"last"`
 }
 
-// Chunk is one committed chunk.
+// Chunk is one committed chunk: a file Alpheus moves but never reads.
 type Chunk struct {
-	N      int64  `json:"n"`
-	Rows   int64  `json:"rows"`
+	N int64 `json:"n"`
+	// Ext is the file extension the component gave at Create (GO-104).
+	Ext    string `json:"ext"`
 	Bytes  int64  `json:"bytes"`
 	SHA256 string `json:"sha256"`
+	// Counts are the component's counters committed with this chunk, per
+	// unit (GO-115). Alpheus does not interpret the units.
+	Counts map[string]int64 `json:"counts,omitempty"`
 	// Src is the input chunk this chunk was made from; nil for sources.
 	Src *Source `json:"src,omitempty"`
 }
@@ -219,8 +230,16 @@ func (m *Manifest) Validate() error {
 }
 
 func (c Chunk) validate() error {
-	if c.Rows < 0 || c.Bytes < 0 || len(c.SHA256) != 64 {
+	if !ValidExt(c.Ext) || c.Bytes < 0 || len(c.SHA256) != 64 {
 		return fmt.Errorf("%w: chunk %d", ErrInvalid, c.N)
+	}
+	if len(c.Counts) > MaxUnits {
+		return fmt.Errorf("%w: chunk %d has %d counter units", ErrInvalid, c.N, len(c.Counts))
+	}
+	for unit, n := range c.Counts {
+		if !ValidUnit(unit) || n < 0 {
+			return fmt.Errorf("%w: chunk %d: counter %q = %d", ErrInvalid, c.N, unit, n)
+		}
 	}
 	if c.Src != nil && c.Src.N < 1 {
 		return fmt.Errorf("%w: chunk %d has source chunk %d", ErrInvalid, c.N, c.Src.N)

@@ -38,7 +38,7 @@ func TestStreamKeys(t *testing.T) {
 	for _, tc := range []struct{ got, want string }{
 		{s.ID, "read-filter/2"},
 		{s.Prefix(), "runs/3f0c9a6e/read-filter/2/"},
-		{s.ChunkKey(17), "runs/3f0c9a6e/read-filter/2/part-000017.parquet"},
+		{s.ChunkKey(17, "csv"), "runs/3f0c9a6e/read-filter/2/part-000017.csv"},
 		{s.ManifestKey(), "runs/3f0c9a6e/read-filter/2/manifest.json"},
 		{s.SegmentKey(1), "runs/3f0c9a6e/read-filter/2/manifest-0001.json"},
 		{s.AckKey("sum", 0), "runs/3f0c9a6e/read-filter/2/acks-sum-0.json"},
@@ -110,6 +110,17 @@ func TestAssignOneReplica(t *testing.T) {
 	for _, replicas := range []int{0, 1} {
 		if got := Assign(7, 3, replicas); got != 0 {
 			t.Errorf("Assign(7, 3, %d) = %d, want 0", replicas, got)
+		}
+	}
+}
+
+func TestValidExt(t *testing.T) {
+	for ext, want := range map[string]bool{
+		"csv": true, "parquet": true, "jsonl": true, "7z": true,
+		"": false, "CSV": false, "tar.gz": false, "a_b": false, "abcdefghijklmnopq": false,
+	} {
+		if got := ValidExt(ext); got != want {
+			t.Errorf("ValidExt(%q) = %v, want %v", ext, got, want)
 		}
 	}
 }

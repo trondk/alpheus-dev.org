@@ -25,7 +25,7 @@ import (
 
 const sum0 = "0000000000000000000000000000000000000000000000000000000000000000"
 
-func chunkN(n int64) Chunk { return Chunk{N: n, Rows: 10, Bytes: 100, SHA256: sum0} }
+func chunkN(n int64) Chunk { return Chunk{N: n, Ext: "csv", Bytes: 100, SHA256: sum0} }
 
 func TestManifestAppend(t *testing.T) {
 	m := NewManifest("sales-dk", "uid", "read-filter", 0, 1)
@@ -129,8 +129,8 @@ func TestManifestCheckEpoch(t *testing.T) {
 
 func TestManifestRoundTrip(t *testing.T) {
 	m := NewManifest("sales-dk-0042", "3f0c9a6e", "read-filter", 1, 2)
-	m.Schema = "sha256:abc"
 	c := chunkN(1)
+	c.Counts = map[string]int64{"rows": 50000, "files": 3}
 	c.Src = &Source{Edge: "source-read", Replica: 0, N: 4711}
 	if _, err := m.Append(c); err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestManifestRoundTrip(t *testing.T) {
 }
 
 func TestParseManifestRejects(t *testing.T) {
-	valid := `{"version":1,"run":"r","uid":"u","edge":"a-b","replica":0,"epoch":1,"schema":"","segments":[],"chunks":[],"consumed":{},"eos":false,"last":null}`
+	valid := `{"version":1,"run":"r","uid":"u","edge":"a-b","replica":0,"epoch":1,"segments":[],"chunks":[],"consumed":{},"eos":false,"last":null}`
 	if _, err := ParseManifest([]byte(valid)); err != nil {
 		t.Fatalf("valid manifest: %v", err)
 	}
@@ -160,9 +160,14 @@ func TestParseManifestRejects(t *testing.T) {
 		"epoch 0":          {strings.Replace(valid, `"epoch":1`, `"epoch":0`, 1), ErrInvalid},
 		"eos without last": {strings.Replace(valid, `"eos":false`, `"eos":true`, 1), ErrInvalid},
 		"chunk gap": {strings.Replace(valid, `"chunks":[]`,
-			`"chunks":[{"n":2,"rows":1,"bytes":1,"sha256":"`+sum0+`"}]`, 1), ErrInvalid},
+			`"chunks":[{"n":2,"ext":"csv","bytes":1,"sha256":"`+sum0+`"}]`, 1), ErrInvalid},
 		"short checksum": {strings.Replace(valid, `"chunks":[]`,
-			`"chunks":[{"n":1,"rows":1,"bytes":1,"sha256":"00"}]`, 1), ErrInvalid},
+			`"chunks":[{"n":1,"ext":"csv","bytes":1,"sha256":"00"}]`, 1), ErrInvalid},
+		"bad extension": {strings.Replace(valid, `"chunks":[]`,
+			`"chunks":[{"n":1,"ext":"tar.gz","bytes":1,"sha256":"`+sum0+`"}]`, 1), ErrInvalid},
+		"bad counter unit": {strings.Replace(valid, `"chunks":[]`,
+			`"chunks":[{"n":1,"ext":"csv","bytes":1,"sha256":"`+sum0+`","counts":{"Rows":1}}]`, 1), ErrInvalid},
+		"old schema field":   {strings.Replace(valid, `"segments"`, `"schema":"","segments"`, 1), ErrInvalid},
 		"wrong segment name": {strings.Replace(valid, `"segments":[]`, `"segments":["manifest-0001.json"]`, 1), ErrInvalid},
 	} {
 		if _, err := ParseManifest([]byte(tc.data)); !errors.Is(err, tc.want) {

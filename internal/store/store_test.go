@@ -109,15 +109,15 @@ func testStore(t *testing.T, s Store, prefix string) {
 
 	t.Run("chunk with checksum", func(t *testing.T) {
 		// What the agent does: hash while writing, verify while reading.
-		content := bytes.Repeat([]byte("parquet"), 100000)
+		content := bytes.Repeat([]byte("order_id,country\n"), 100000)
 		var buf bytes.Buffer
 		hw := chunk.NewHashingWriter(&buf)
 		hw.Write(content)
-		c := chunk.Chunk{N: 1, Bytes: hw.Size(), SHA256: hw.Sum()}
-		if err := s.Put(ctx, key("part-000001.parquet"), &buf, c.Bytes); err != nil {
+		c := chunk.Chunk{N: 1, Ext: "csv", Bytes: hw.Size(), SHA256: hw.Sum()}
+		if err := s.Put(ctx, key("part-000001.csv"), &buf, c.Bytes); err != nil {
 			t.Fatal(err)
 		}
-		r, err := s.Get(ctx, key("part-000001.parquet"))
+		r, err := s.Get(ctx, key("part-000001.csv"))
 		if err != nil {
 			t.Fatal(err)
 		}

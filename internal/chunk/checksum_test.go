@@ -25,7 +25,7 @@ import (
 )
 
 func TestChecksumRoundTrip(t *testing.T) {
-	content := strings.Repeat("parquet bytes ", 1000)
+	content := strings.Repeat("order_id,country,amount\n", 1000)
 	var buf bytes.Buffer
 	hw := NewHashingWriter(&buf)
 	if _, err := io.Copy(hw, strings.NewReader(content)); err != nil {
