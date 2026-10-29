@@ -230,6 +230,7 @@ Agenten er den eneste del, der taler med S3 og signal-driveren. Den:
 service Agent {
   rpc Next(NextRequest) returns (NextResponse);          // næste chunk eller EOS
   rpc Emit(stream EmitRequest) returns (EmitResponse);   // batches til en udgang
+  rpc Flush(FlushRequest) returns (FlushResponse);       // afslut chunken på en udgang
   rpc Done(DoneRequest) returns (DoneResponse);          // input-chunk færdig
   rpc Report(ReportRequest) returns (ReportResponse);    // afviste rækker
 }
@@ -399,6 +400,8 @@ func main() {
 | GO-47 | SKAL | SDK'et har en lokal testmode, der læser Parquet-filer fra disk og skriver til disk uden agent, så komponenter kan testes uden Kubernetes. |
 | GO-48 | SKAL | Komponenter med tilstand på tværs af chunks får et `in.OnEOS`-hook til at skrive deres resultat til sidst. |
 | GO-49 | BØR | Samme komponent-binær kan køre i MCPipes batch-mode på Argo ved at SDK'et genkender miljøet og læser én stor chunk. |
+| GO-86 | SKAL | En output-chunk slutter, når den når `maxRows`, når den input-chunk, den blev lavet af, er færdig (`Done`), og når komponenten kalder `Flush` på udgangen. `Flush` er til komponenter, der selv vælger grænserne, fx en kilde, der skriver sine data i dele. |
+| GO-87 | SKAL | Lokal testmode vælges med `ALPHEUS_MODE=local` og mapperne `ALPHEUS_LOCAL_INPUT` (input-chunks som `*.parquet`, læst i navneorden) og `ALPHEUS_LOCAL_OUTPUT` (én mappe pr. udgang). `ALPHEUS_SETTINGS` er trinnets settings som JSON, og `ALPHEUS_REPLICA` og `ALPHEUS_REPLICAS` vælger, hvilke chunks replikaen læser (GO-76). Komponenttests kalder `sdk.RunLocal` direkte. |
 
 
 ## 11. Logning, metrics og tracing
