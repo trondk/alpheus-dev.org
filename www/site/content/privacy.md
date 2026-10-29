@@ -1,6 +1,6 @@
 ---
 title: Privacy
-description: What alpheus-dev.org collects about visitors, which is nothing, and what the hosting provider logs.
+description: What alpheus-dev.org collects about visitors, which is nothing, and what the web server logs.
 lastmod: 2026-10-29
 ---
 
@@ -9,18 +9,21 @@ tracking or analytics, and loads nothing from other domains: fonts,
 styles and images are all served from alpheus-dev.org. That is also why
 there is no cookie banner.
 
-## Hosting
+## Server logs
 
-The site is hosted on [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages#data-collection),
-run by GitHub, Inc. When you visit a page, GitHub logs your IP address for
-security purposes, whether or not you are signed in to GitHub. GitHub
-handles that data under the
-[GitHub General Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
-The Alpheus project has no access to those logs.
+The site runs on a web server operated by the Alpheus project, not on
+a hosting platform or a content delivery network.
+
+Like most web servers, ours keeps an access log: the time, the page you
+asked for, your browser's user agent and a shortened IP address. The
+last part of the address is removed before it is written (the last
+number of an IPv4 address, the last 80 bits of an IPv6 address), so the
+log cannot point to a single connection. The log is used only to find
+errors and stop abuse, and it is deleted after 14 days.
 
 ## Links to other sites
 
-Links to GitHub, pkg.go.dev and other sites take you away from
+Links to the code repository, pkg.go.dev and other sites take you away from
 alpheus-dev.org. Their own privacy terms apply there.
 
 ## Changes

@@ -14,7 +14,9 @@ enableRobotsTXT = true
   phase = "design"
   # The Go module path never changes (WWW-19).
   goModule = "alpheus-dev.org/alpheus"
-  # Where the code lives. Change only this if the repository moves (WWW-19).
+  # The primary repository on Forgejo; never the GitHub mirror (WWW-19).
+  # Every link to the code is built from this. Until the Forgejo instance
+  # exists, it points at GitHub.
   repo = "https://github.com/alpheus-dev/alpheus"
   repoBranch = "main"
 
@@ -38,15 +40,16 @@ enableRobotsTXT = true
     name = "About"
     url = "/about/"
     weight = 30
+  # params.repo is a path in the repository given by params.repo above.
   [[menus.main]]
     name = "Repository"
-    url = "https://github.com/alpheus-dev/alpheus"
     weight = 40
+    params = { repo = "" }
 
   [[menus.footer]]
     name = "Apache License 2.0"
-    url = "https://github.com/alpheus-dev/alpheus/blob/main/LICENSE"
     weight = 10
+    params = { repo = "LICENSE" }
   [[menus.footer]]
     name = "Governance"
     url = "/about/#governance"
@@ -61,8 +64,8 @@ enableRobotsTXT = true
     weight = 40
   [[menus.footer]]
     name = "Repository"
-    url = "https://github.com/alpheus-dev/alpheus"
     weight = 50
+    params = { repo = "" }
   [[menus.footer]]
     name = "Contact"
     url = "/about/#contact"

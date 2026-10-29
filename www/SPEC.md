@@ -7,6 +7,10 @@ hvad Alpheus er, hjælper en platform engineer i gang på under ti
 minutter, og er hjem for Go-modulets vanity import. Krav-ID'er herfra
 starter med `WWW-`.
 
+Projektets repo'er ligger på en selvhostet Forgejo-instans, som er det
+primære hjem. GitHub har et spejl, der kun læses fra. Adressen på
+Forgejo-instansen er ikke besluttet og står her som `<forgejo>`.
+
 Krav bruger SKAL og BØR. ID'er er stabile: et krav, der udgår, beholder
 sit nummer med teksten "Udgået", og nye krav får det næste ledige nummer.
 
@@ -43,7 +47,7 @@ saglig, konkret og uden salgssprog.
   protocol/               Chunk-protokollen i detaljer
 /about/                   Om projektet: historien, governance, licens, kontakt
 /security/                Sådan rapporteres sårbarheder (genereres fra SECURITY.md)
-/releases/                Udgivelser og release notes (genereres fra GitHub Releases)
+/releases/                Udgivelser og release notes (genereres fra udgivelserne på Forgejo)
 /privacy/                 Privatliv (se afsnit 7)
 /alpheus/                 Vanity import for Go-modulet (se afsnit 5)
 ```
@@ -52,7 +56,7 @@ saglig, konkret og uden salgssprog.
 |---|---|---|
 | WWW-3 | SKAL | Dokumentationen versioneres pr. minor-udgivelse (`/docs/v0.1/`), og `/docs/` peger på den seneste. Hver version bygges fra det seneste patch-tag i sin minor-serie. `/docs/dev/` bygges fra `main` og har en tydelig markering af, at den beskriver ikke-udgivet kode. Før første udgivelse peger `/docs/` på `/docs/dev/`. |
 | WWW-4 | SKAL | CRD- og CLI-referencen genereres ved hvert byg fra det samme tag (eller `main`) som den dokumentationsversion, de hører til, så de aldrig kommer ud af trit med programmet. |
-| WWW-5 | SKAL | Hver dokumentationsside har et "Edit this page"-link til kilden i repo'et. |
+| WWW-5 | SKAL | Hver dokumentationsside har et "Edit this page"-link til kilden i det primære repo på Forgejo, ikke i spejlet. |
 | WWW-6 | BØR | Søgning i dokumentationen kører helt i browseren (fx Pagefind), uden en ekstern søgetjeneste. |
 
 
@@ -176,18 +180,21 @@ Alpheus gør med data mellem trin.
 
 Go-modulet hedder `alpheus-dev.org/alpheus`. Når `go` henter modulet,
 spørger den `https://alpheus-dev.org/alpheus?go-get=1` og forventer
-meta-tags, der peger på repo'et.
+meta-tags, der peger på det primære repo på Forgejo.
 
 ```html
-<meta name="go-import" content="alpheus-dev.org/alpheus git https://github.com/alpheus-dev/alpheus">
-<meta name="go-source" content="alpheus-dev.org/alpheus https://github.com/alpheus-dev/alpheus https://github.com/alpheus-dev/alpheus/tree/main{/dir} https://github.com/alpheus-dev/alpheus/blob/main{/dir}/{file}#L{line}">
+<meta name="go-import" content="alpheus-dev.org/alpheus git https://<forgejo>/alpheus-dev/alpheus">
+<meta name="go-source" content="alpheus-dev.org/alpheus https://<forgejo>/alpheus-dev/alpheus https://<forgejo>/alpheus-dev/alpheus/src/branch/main{/dir} https://<forgejo>/alpheus-dev/alpheus/src/branch/main{/dir}/{file}#L{line}">
 ```
+
+Er Forgejo-instansen nede, kan `go` stadig hente udgivne versioner
+gennem proxy.golang.org, som har dem i sin cache.
 
 | ID | Niveau | Krav |
 |---|---|---|
 | WWW-17 | SKAL | `/alpheus/` og hver offentlig pakke (`/alpheus/sdk/`, `/alpheus/api/v1alpha1/`) har siden med meta-tags. Listen over pakker genereres ved byg med `go list ./...` i hovedrepo'et, uden `internal/`-pakker, så nye pakker kommer med automatisk. |
 | WWW-18 | SKAL | En besøgende i en browser på `/alpheus/` ser en kort side med links til repo'et og til pkg.go.dev, ikke en tom side. |
-| WWW-19 | SKAL | Repo-URL'en i `go-import` ændres ét sted i konfigurationen, hvis hjemmet flyttes fra GitHub til Forgejo eller omvendt. Modulstien ændres aldrig. |
+| WWW-19 | SKAL | Repo-URL'en i `go-import`, "Edit this page" og alle andre links til koden ændres ét sted i konfigurationen, hvis hjemmet flytter. Den peger på det primære repo, aldrig på spejlet. Modulstien ændres aldrig. |
 | WWW-20 | SKAL | CI tester efter hver udgivelse af siden, at `go list -m alpheus-dev.org/alpheus@latest` virker mod den udgivne side. Testen kører med `GOPROXY=direct`, `GONOSUMDB=alpheus-dev.org` og en tom modulcache, så den rammer siden og ikke proxy.golang.org's cache. Den tester også én underpakke. |
 
 
@@ -196,10 +203,11 @@ meta-tags, der peger på repo'et.
 | ID | Niveau | Krav |
 |---|---|---|
 | WWW-21 | SKAL | Siden bygges med Hugo (statisk, en enkelt Go-binær). Hugo-versionen fastlåses i CI. |
-| WWW-22 | SKAL | Siden ligger i repo'et `alpheus-dev/alpheus-dev.org`. Dokumentationens kilde ligger i `docs/` i hovedrepo'et og hentes ind ved byg (fra `main` og fra hvert release-tag, se WWW-3), så dokumentation og kode ændres i samme pull request. |
-| WWW-23 | SKAL | GitHub Actions bygger og udgiver til GitHub Pages ved push til `main` i begge repo'er og ved hver udgivelse af Alpheus. Hovedrepo'et udløser bygget med `repository_dispatch` via en GitHub App med adgang til netop det ene repo, ikke en personlig token. |
+| WWW-22 | SKAL | Siden ligger i repo'et `alpheus-dev/alpheus-dev.org` på Forgejo. Dokumentationens kilde ligger i `docs/` i hovedrepo'et og hentes ind ved byg (fra `main` og fra hvert release-tag, se WWW-3), så dokumentation og kode ændres i samme pull request. |
+| WWW-23 | SKAL | Forgejo Actions bygger og udgiver til projektets egen webserver ved push til `main` i begge repo'er og ved hver udgivelse af Alpheus. Hovedrepo'et udløser bygget via Forgejos API med en token, der kun har adgang til netop det ene repo. Udgivelsen sker med rsync over SSH med en nøgle, der kun kan skrive i sidens mappe på serveren. |
+| WWW-44 | SKAL | Spejlene på GitHub opdateres automatisk fra Forgejo og kører ingen workflows. Issues, pull requests og Actions er slået fra, og beskrivelsen peger på det primære repo. |
 | WWW-24 | SKAL | Siden virker fuldt ud uden JavaScript. JavaScript bruges kun til søgning og kopier-knapper på kodeblokke. Menuen på telefoner bygges med `<details>`/`<summary>`, og kopier-knapper indsættes af scriptet, så de ikke står døde uden JavaScript. |
-| WWW-43 | SKAL | Hver side har en Content-Security-Policy som `<meta http-equiv>` (se afsnit 9), der kun tillader ressourcer fra siden selv: `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'` (Pagefind bruger WebAssembly), ingen `'unsafe-inline'`. Hugo sættes op med `markup.highlight.noClasses = false`, så syntaksfremhævning bruger klasser i stedet for inline styles. |
+| WWW-43 | SKAL | Hver side har en Content-Security-Policy som `<meta http-equiv>`, så den også gælder i forhåndsvisninger, og webserveren sender samme politik som header med `frame-ancestors 'none'` tilføjet (se afsnit 9). Politikken tillader kun ressourcer fra siden selv: `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'` (Pagefind bruger WebAssembly), ingen `'unsafe-inline'`. Hugo sættes op med `markup.highlight.noClasses = false`, så syntaksfremhævning bruger klasser i stedet for inline styles. |
 | WWW-25 | SKAL | Ingen eksterne ressourcer: ingen CDN'er, scripts, skrifter, billeder eller iframes fra andre domæner. |
 | WWW-26 | SKAL | Forsiden vejer under 150 KB samlet ved første indlæsning, inklusive skrifter. |
 | WWW-27 | BØR | Lighthouse-score på mindst 95 i alle kategorier, kontrolleret i CI. |
@@ -210,7 +218,8 @@ meta-tags, der peger på repo'et.
 | ID | Niveau | Krav |
 |---|---|---|
 | WWW-28 | SKAL | Ingen cookies, ingen tracking og ingen tredjeparts-analytics. Derfor er der ingen cookie-banner. |
-| WWW-29 | SKAL | En kort privatlivsside forklarer, at siden ikke indsamler data, og at GitHub Pages som hosting logger IP-adresser efter GitHubs egne vilkår. |
+| WWW-29 | SKAL | En kort privatlivsside forklarer, at siden ikke indsamler data, hvad webserveren logger, og hvor længe loggen gemmes. |
+| WWW-45 | SKAL | Webserverens adgangslog gemmer kun forkortede IP-adresser (sidste oktet i IPv4 og de sidste 80 bit i IPv6 sat til nul) og slettes efter højst 14 dage. Fejlloggen må ikke indeholde IP-adresser. |
 | WWW-30 | BØR | Hvis besøgstal bliver nødvendige, bruges en selvhostet, cookie-fri løsning, og privatlivssiden opdateres først. |
 
 
@@ -228,20 +237,17 @@ meta-tags, der peger på repo'et.
 
 | ID | Niveau | Krav |
 |---|---|---|
-| WWW-35 | SKAL | Domænet er verificeret i GitHub-org'en `alpheus-dev`, både som org-domæne og til GitHub Pages, så det ikke kan overtages via Pages. |
-| WWW-36 | SKAL | Apex-domænet peger på GitHub Pages med A- og AAAA-records. `www.alpheus-dev.org` er en CNAME til `alpheus-dev.github.io` og omdirigerer til apex. |
-| WWW-37 | SKAL | "Enforce HTTPS" er slået til. |
+| WWW-35 | BØR | Domænet er verificeret i GitHub-org'en `alpheus-dev`, så spejlet viser, at det hører til projektet. Ingen DNS-records peger på GitHub. |
+| WWW-36 | SKAL | Apex-domænet peger på projektets webserver med A- og AAAA-records. `www.alpheus-dev.org` peger på samme server, som omdirigerer permanent (301) til apex. |
+| WWW-37 | SKAL | Siden svarer kun over HTTPS med TLS 1.2 eller nyere. HTTP omdirigeres permanent til HTTPS. Certifikatet fornyes automatisk med ACME. |
+| WWW-46 | SKAL | Webserveren sender `Strict-Transport-Security` (mindst et år), `Content-Security-Policy` (WWW-43), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` og `Permissions-Policy`, der slår kamera, mikrofon og position fra. |
 | WWW-38 | SKAL | Domænet har auto-fornyelse, transfer lock og DNSSEC, hvis registraren understøtter det. |
 | WWW-39 | BØR | En CAA-record begrænser, hvilke certifikatudstedere der må udstede for domænet. |
 
-GitHub Pages kan ikke sætte egne HTTP-headere. En Content-Security-Policy
-sættes derfor som `<meta http-equiv>` i hver side (WWW-43). Det har
-grænser: `frame-ancestors` virker ikke i meta-tags, så siden kan ikke
-forhindre, at den indlejres i en frame på et andet domæne. GitHub Pages
-sender selv HSTS for `*.github.io`, men ikke for egne domæner. Bliver
-headere som HSTS, `X-Content-Type-Options` eller `frame-ancestors` et
-krav, flyttes hostingen til en selvhostet webserver eller en europæisk
-statisk host.
+Siden ligger på projektets egen webserver, så ingen tredjepart ser
+besøgendes IP-adresser, og serveren kan sende sikkerhedsheadere.
+`frame-ancestors` virker kun som header, ikke i et meta-tag, og derfor
+sender serveren CSP'en som header, selv om den også står i hver side.
 
 
 ## 10. Accepttest
@@ -261,13 +267,22 @@ statisk host.
 - [ ] Siden virker med JavaScript slået fra, bortset fra søgning.
 - [ ] Browserens konsol viser ingen CSP-fejl, heller ikke under søgning.
 - [ ] Alle skrifter hentes fra alpheus-dev.org.
-- [ ] Hver dokumentationsside har et virkende "Edit this page"-link.
+- [ ] Hver dokumentationsside har et virkende "Edit this page"-link til
+      Forgejo.
+- [ ] Headerne fra WWW-46 sendes, og `http://` og `www.` omdirigerer til
+      `https://alpheus-dev.org/`.
+- [ ] Adgangsloggen indeholder kun forkortede IP-adresser (WWW-45).
+- [ ] Spejlet på GitHub har ingen workflows, issues eller pull requests.
 
 
 ## 11. Åbne spørgsmål
 
 - Skal en dansk version af forsiden med fra start?
-- Skal siden flytte fra GitHub Pages til en europæisk host for at passe
-  bedre til suverænitetsvinklen?
+- Hvad bliver adressen på Forgejo-instansen?
+- Hvilken webserver kører siden (fx Caddy eller nginx), og hvem driver
+  serveren?
+- Hvor skal sårbarheder rapporteres, når GitHubs private
+  sårbarhedsrapportering ikke kan bruges på et spejl? Fx en
+  e-mailadresse som `security@alpheus-dev.org`.
 - Hvem godkender indhold på siden: kun maintainers, eller også
   Redpill Linpro, hvis firmaet står bag?

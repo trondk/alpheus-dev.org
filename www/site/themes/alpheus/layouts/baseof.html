@@ -21,11 +21,7 @@
 
 <header class="site">
   <nav aria-label="Main">
-    <ul>
-      {{ range site.Menus.main }}
-      <li><a href="{{ .URL }}">{{ .Name }}</a></li>
-      {{ end }}
-    </ul>
+    {{ partial "menu.html" site.Menus.main }}
   </nav>
 </header>
 
@@ -34,11 +30,7 @@
 </main>
 
 <footer class="site">
-  <ul>
-    {{ range site.Menus.footer }}
-    <li><a href="{{ .URL }}">{{ .Name }}</a></li>
-    {{ end }}
-  </ul>
+  {{ partial "menu.html" site.Menus.footer }}
 </footer>
 </body>
 </html>

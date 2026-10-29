@@ -1,15 +1,9 @@
 {{/* Vanity import page for the Go module (WWW-17, WWW-18, WWW-19). */}}
 {{ define "head" }}
 {{ $repo := site.Params.repo }}
-{{ $branch := site.Params.repoBranch }}
-{{ $tree := printf "%s/src/branch/%s" $repo $branch }}
-{{ $blob := $tree }}
-{{ if strings.Contains $repo "github.com" }}
-  {{ $tree = printf "%s/tree/%s" $repo $branch }}
-  {{ $blob = printf "%s/blob/%s" $repo $branch }}
-{{ end }}
+{{ $dir := strings.TrimRight "/" (partial "repo-url.html" "/") }}
 <meta name="go-import" content="{{ site.Params.goModule }} git {{ $repo }}">
-<meta name="go-source" content="{{ site.Params.goModule }} {{ $repo }} {{ $tree }}{/dir} {{ $blob }}{/dir}/{file}#L{line}">
+<meta name="go-source" content="{{ site.Params.goModule }} {{ $repo }} {{ $dir }}{/dir} {{ $dir }}{/dir}/{file}#L{line}">
 {{ end }}
 
 {{ define "main" }}

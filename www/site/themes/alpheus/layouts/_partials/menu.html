@@ -1,0 +1,6 @@
+{{- /* A menu as list items. Entries with params.repo link into the code repository. */ -}}
+<ul>
+  {{- range . }}
+  <li><a href="{{ if isset .Params "repo" }}{{ partial "repo-url.html" .Params.repo }}{{ else }}{{ .URL }}{{ end }}">{{ .Name }}</a></li>
+  {{- end }}
+</ul>

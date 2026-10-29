@@ -13,7 +13,7 @@ Hugo is pinned to v0.168.0 (WWW-21).
 | What | Where |
 |---|---|
 | Project phase shown on the front page (WWW-8) | `params.phase` in `hugo.toml` |
-| Repository behind the Go vanity import (WWW-19) | `params.repo` in `hugo.toml` |
+| Primary repository on Forgejo, used for go-import and every link to the code (WWW-19) | `params.repo` in `hugo.toml` |
 | Public Go packages (WWW-17) | `data/gopackages.toml`, generated in CI |
 | Front page text | `content/_index.md` |
 | Text for each phase | `data/phases.toml` |
@@ -24,8 +24,11 @@ them in `themes/alpheus/static/fonts/`.
 
 ## CI
 
-`.github/workflows/site.yml` builds the site, checks it and publishes it
-to GitHub Pages. It expects to be at the root of `alpheus-dev/alpheus-dev.org`.
+`.forgejo/workflows/site.yml` builds the site on Forgejo Actions, checks
+it and publishes it with rsync to the project's web server. It expects to
+be at the root of `alpheus-dev/alpheus-dev.org` on Forgejo. The GitHub
+mirror ignores `.forgejo/` and runs nothing. The secrets and variables it
+needs are listed at the top of the workflow.
 
 | Check | Requirement | Run locally |
 |---|---|---|
@@ -36,4 +39,3 @@ to GitHub Pages. It expects to be at the root of `alpheus-dev/alpheus-dev.org`.
 | Vanity pages answer `?go-get=1` | WWW-17 | after deploy only |
 | `go list` straight from the site | WWW-20 | after deploy, once the variable `GO_MODULE_PUBLISHED` is `true` |
 
-Before the first deploy, set *Settings → Pages → Source* to *GitHub Actions*.
