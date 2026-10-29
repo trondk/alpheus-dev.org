@@ -62,7 +62,7 @@ alpheus/
 ├── config/                genererede CRD-, RBAC- og webhook-manifester
 ├── charts/alpheus/        Helm-chart
 ├── test/
-│   ├── e2e/               testcase01, testcase02 og fejltests
+│   ├── e2e/               testcase01, testcase02, testcase03-replicas og fejltests
 │   └── fixtures/          input og golden files
 ├── docs/                  kilde til dokumentationen på hjemmesiden
 ├── GOVERNANCE.md
@@ -110,6 +110,53 @@ forslaget.
 | GO-17 | SKAL | Printer-kolonner viser fase, antal trin, alder og eventuel fejl i `kubectl get sr`. |
 | GO-18 | BØR | Conditions følger `metav1.Condition` (`Ready`, `Progressing`, `Degraded`). |
 
+### 5.1 Replikaer
+
+Et trin kan køre i flere kopier, der deler input-chunks mellem sig:
+
+```yaml
+steps:
+  - name: generate
+    image: registry.example/generate@sha256:…
+  - name: filter
+    image: registry.example/filter@sha256:…
+    replicas: 10
+    settings: {field: country, in: [DK]}
+  - name: sum
+    image: registry.example/sum@sha256:…
+edges:
+  - {from: generate, to: filter}
+  - {from: filter, to: sum}
+```
+
+Hver replika er sin egen pod med sin egen agent. Hver producent-replika
+skriver sin egen strøm af chunks på en kant (7.3), så der stadig kun er
+én skriver pr. manifest. Et trin uden `replicas` har én replika.
+
+| ID | Niveau | Krav |
+|---|---|---|
+| GO-75 | SKAL | `spec.steps[].replicas` (standard 1, højst 64) angiver antallet af replikaer. Replikaerne nummereres 0 til `replicas`-1, og agenten får sit nummer som miljøvariabel. |
+| GO-76 | SKAL | Chunk nummer n i strømmen fra producent-replika p går til forbruger-replika (n + p) mod `replicas` hos hvert forbrugende trin. Leddet p spreder arbejdet, når mange producent-replikaer hver laver få chunks; uden det ville alle strømme starte på samme forbruger-replika. Fordelingen er deterministisk, så en genstartet replika får præcis de samme chunks igen. |
+| GO-77 | SKAL | `maxRestarts` og forsøgsnummeret (GO-67) gælder pr. replika. Et trin er afsluttet, når alle dets replikaer er afsluttet, og fejlet, når én replika har brugt alle sine genstarter. |
+
+### 5.2 Resultater
+
+En udgang, som ingen kant går fra, er et resultat. Agenten skriver den som
+en strøm med manifest, ligesom en kant, men under
+`results/<run>/<uid>/<trin>/<udgang>/<replika>/` i stedet for
+`runs/<uid>/`. `<uid>` er StreamRun-objektets `metadata.uid`.
+
+| ID | Niveau | Krav |
+|---|---|---|
+| GO-83 | SKAL | Stier i lageret bruger runnets UID, ikke kun dets navn: `runs/<uid>/` og `results/<run>/<uid>/`. Slettes en StreamRun og oprettes igen med samme navn, får den en ny UID, og gamle og nye data blandes aldrig. Navnet står med i `results/` og i manifestet (`run`), så en person kan finde resultatet. |
+| GO-78 | SKAL | Resultater slettes ikke af `ttlAfterFinished` eller finalizeren (GO-20), da de er runnets produkt. De slettes af den, der bruger dem. |
+| GO-79 | SKAL | `status.results` har én post pr. resultat med S3-endpoint, bucket, prefix, navnet på Secret'en med nøglerne (`spec.storage.secretRef`) og antal chunks og rækker. Det er det, der skal til for at hente resultatet, og `alpheus get` viser det. |
+
+Secret'en i `status.results` er den samme som agenternes, med adgang til
+hele bucketen. Det strider mod princippet om, at agentens nøgle kun
+giver adgang til runnets eget prefix. I testmiljøet er det acceptabelt;
+en særskilt læsenøgle kun til `results/` er et åbent spørgsmål (16).
+
 
 ## 6. Controller (`internal/controller`)
 
@@ -122,10 +169,11 @@ idempotent: samme input giver samme ønskede tilstand.
    ingen løkker. Fejl sætter fasen `Failed` med en læsbar årsag.
 2. Opret Secret-referencer, ServiceAccount og NetworkPolicy for runnet,
    hvis de mangler.
-3. Opret én pod pr. trin, hvis den mangler (se 6.2).
+3. Opret én pod pr. replika af hvert trin, hvis den mangler (se 6.2).
 4. Læs pod-status og agenternes rapporter, og opdater `status`.
 5. Når alle trin er afsluttet, sæt slutfasen og `finishedAt`.
-6. Når `ttlAfterFinished` er udløbet, slet pods og runnets S3-prefix.
+6. Når `ttlAfterFinished` er udløbet, slet pods og runnets S3-prefix
+   (`runs/<uid>/`, ikke `results/`, GO-78).
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -198,13 +246,18 @@ andre sprog kan bruge enhver Arrow-implementering.
 
 ### 7.3 Chunks og manifest (`internal/chunk`)
 
+En kant hedder `<fra>-<til>`, eller `<fra>.<udgang>-<til>` for en anden
+udgang end `default`. Hver producent-replika skriver sin egen strøm på
+kanten, i mappen `runs/<uid>/<kant>/<replika>/` (replika 0 for et trin
+uden `replicas`, GO-83). Chunks i en strøm nummereres fra 1 og uden huller.
+
 S3 har ingen rename. Derfor er manifestet commit-punktet i stedet for en
 omdøbning:
 
 1. Producenten skriver chunk-objektet direkte under sit endelige navn
-   `runs/<run>/<kant>/part-000017.parquet`.
+   `runs/<uid>/<kant>/<replika>/part-000017.parquet`.
 2. Producenten skriver derefter manifestet
-   `runs/<run>/<kant>/manifest.json` med chunken tilføjet.
+   `runs/<uid>/<kant>/<replika>/manifest.json` med chunken tilføjet.
 3. En chunk findes kun logisk, når den står i manifestet. Forbrugere
    læser aldrig objekter, der ikke er listet.
 4. Ved genstart sletter producenten objekter, der ikke står i
@@ -219,15 +272,17 @@ Manifestformat (version 1):
 {
   "version": 1,
   "run": "sales-dk-0042",
+  "uid": "3f0c9a6e-…",
   "edge": "read-filter",
+  "replica": 0,
   "epoch": 2,
   "schema": "sha256:…",
   "segments": ["manifest-0000.json"],
   "chunks": [
     {"n": 10017, "rows": 50000, "bytes": 1832211, "sha256": "…",
-     "src": {"edge": "source-read", "n": 4711}}
+     "src": {"edge": "source-read", "replica": 0, "n": 4711}}
   ],
-  "consumed": {"source-read": 4711},
+  "consumed": {"source-read/0": 4711},
   "eos": false,
   "last": null
 }
@@ -238,13 +293,15 @@ Manifestformat (version 1):
   indeholder kun chunks, der endnu ikke er forseglet.
 - `src` angiver den input-chunk, en output-chunk blev lavet af. Kilder
   (trin uden indgående kanter) udelader feltet.
-- `consumed` angiver pr. indgående kant producentens trin den højeste
-  input-chunk, hvis output til denne kant er fuldt committet, også når
-  den ikke gav nogen rækker til kanten (se 7.4).
+- `replica` er nummeret på den producent-replika, der ejer strømmen.
+- `consumed` angiver pr. indgående strøm (`<kant>/<replika>`) den højeste
+  input-chunk, hvis output til denne strøm er fuldt committet, også når
+  den ikke gav nogen rækker (se 7.4). En replika ser kun på de chunks,
+  der er tildelt den (GO-76).
 
 | ID | Niveau | Krav |
 |---|---|---|
-| GO-30 | SKAL | Hver kant har præcis én skriver af manifestet (producentens agent), og hver ack-fil har præcis én skriver (forbrugerens agent, GO-36). Derfor kræves ingen låsning eller betingede skrivninger i S3. Enkeltskriveren sikres af GO-67. |
+| GO-30 | SKAL | Hver strøm har præcis én skriver af manifestet (agenten for den producent-replika, der ejer strømmen), og hver ack-fil har præcis én skriver (forbruger-replikaens agent, GO-36). Derfor kræves ingen låsning eller betingede skrivninger i S3. Enkeltskriveren sikres af GO-67. |
 | GO-31 | SKAL | Checksum (SHA-256) beregnes under skrivning og verificeres under læsning. |
 | GO-32 | SKAL | Når `chunks` i `manifest.json` når 10.000 chunks, skrives de til et forseglet, uforanderligt segment (`manifest-0000.json`, `manifest-0001.json` osv.). Derefter skrives `manifest.json` med segmentet tilføjet til `segments` og en tom `chunks`. Segmentet skrives altid før `manifest.json`. Så vokser den fil, der omskrives ved hver chunk, ikke ubegrænset. |
 | GO-33 | SKAL | Parquet-chunks skrives med Zstd-komprimering. En row group lukkes ved en konfigurerbar størrelse (standard 64 MiB ukomprimeret), så en chunk kan have flere row groups. |
@@ -260,19 +317,20 @@ er behandlet, gør agenten følgende:
 
 1. Skriver de resterende output-chunks.
 2. Opdaterer hvert udgående manifest med chunkene og sætter
-   `consumed[<indgående kant>]` til input-chunkens nummer.
+   `consumed[<indgående kant>/<replika>]` til input-chunkens nummer.
 3. Skriver acken i ack-filen.
 
 Et nedbrud mellem trin 2 og 3 giver derfor ikke dubleret output.
 
 | ID | Niveau | Krav |
 |---|---|---|
-| GO-35 | SKAL | Producentens `Emit` blokerer, når kanten har `maxUnacked` chunks, som ikke er acket af alle forbrugere af kanten. Komponenten mærker backpressure som et langsomt kald, ikke som en fejl. |
-| GO-36 | SKAL | Hver forbruger af en kant har sin egen ack-fil, `runs/<run>/<kant>/acks-<trin>.json`. Ved fan-out har en kant derfor flere ack-filer, men hver fil har kun én skriver. |
-| GO-37 | SKAL | En input-chunk på en indgående kant er behandlet, når alle udgående manifester har `consumed[<kant>]` større end eller lig med dens nummer. Ved genstart bruger agenten dette, ikke ack-filen, når der er udgående kanter. Den opdaterer ack-filen, så den passer, og fortsætter fra første ubehandlede chunk. |
+| GO-35 | SKAL | Producentens `Emit` blokerer, når strømmen har `maxUnacked` chunks, som ikke er acket af den tildelte replika hos hvert forbrugende trin. Komponenten mærker backpressure som et langsomt kald, ikke som en fejl. |
+| GO-36 | SKAL | Hver forbruger-replika har sin egen ack-fil pr. strøm, `runs/<uid>/<kant>/<replika>/acks-<trin>-<forbruger-replika>.json`. Ved fan-out og replikaer har en strøm derfor flere ack-filer, men hver fil har kun én skriver. Filen lister numrene på de ackede chunks: `{"version": 1, "acked": [1, 11, 21]}`. |
+| GO-37 | SKAL | En input-chunk på en indgående strøm er behandlet, når alle udgående manifester har `consumed[<kant>/<replika>]` større end eller lig med dens nummer. Ved genstart bruger agenten dette, ikke ack-filen, når der er udgående kanter. Den opdaterer ack-filen, så den passer, og fortsætter fra første ubehandlede chunk. |
 | GO-70 | SKAL | Ved genstart sletter agenten output-chunks, der ikke står i manifestet (7.3 trin 4). Hvis en input-chunk genbehandles og et udgående manifest allerede har committet den (`consumed` ≥ nummeret), kasserer agenten komponentens output til netop den kant. Det giver exactly-once pr. kant, også når komponenten ikke er deterministisk. |
 | GO-71 | SKAL | Input-chunks på samme indgående kant afsluttes (`Done`) i rækkefølge. Agenten afviser `Done` i forkert rækkefølge. |
-| GO-72 | SKAL | For et trin uden udgående kanter er ack-filen commit-punktet. Effekter uden for Alpheus (fx skrivning til en database) er at-least-once, og dokumentationen for komponent-SDK'et siger det tydeligt. |
+| GO-80 | SKAL | En forbruger-replika har fået EOS, når hver indgående strøm har `eos` og alle chunks, der er tildelt replikaen, er behandlet. Først da kaldes komponentens `OnEOS` (GO-48). Derefter skriver agenten `eos` i alle replikaens udgående manifester, også når replikaen ikke har lavet noget output; så har manifestet ingen chunks, men `eos: true`. Ellers venter forbrugerne for evigt. |
+| GO-72 | SKAL | Resultater (5.2) tæller som udgående manifester, så et trin med resultater får exactly-once som ved kanter. For et trin uden udgående kanter og uden resultater er ack-filen commit-punktet. Effekter uden for Alpheus (fx skrivning til en database) er at-least-once, og dokumentationen for komponent-SDK'et siger det tydeligt. |
 
 
 ## 8. Signal-drivere (`internal/signal`)
@@ -361,7 +419,7 @@ func main() {
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` og `stomp` | fælles suite, Artemis i en container |
-| E2E | testcase01, testcase02, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage |
+| E2E | testcase01, testcase02, testcase03-replicas, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -371,6 +429,72 @@ func main() {
 | GO-57 | SKAL | `go test -race` kører på alle pakker. |
 | GO-58 | BØR | Fuzz-tests for manifest-parsing og Arrow-afkodning i agenten. |
 | GO-74 | SKAL | Genstartstests slår agenten ihjel mellem hvert trin i commit-rækkefølgen (7.3 og 7.4) og kontrollerer, at output hverken mangler eller er dubleret. |
+
+### 12.1 Testcases
+
+Testkomponenterne ligger i `test/components/` og bygges som images, der
+skubbes til Zot i testmiljøet.
+
+testcase01 og testcase02 er dem fra MCPipe-specifikationen og beholder
+deres betydning (testcase01 er `sales.csv` med golden file, DK i alt
+1846,50). Replikaer testes i en ny testcase med sit eget navn.
+
+**testcase03-replicas: salgsrapport med replikaer.**
+
+```
+generate ──> filter (10 replikaer) ──> sum ──> resultat i S3
+```
+
+- `generate` laver en salgsrapport i 100 dele (chunk 1 til 100). Hver
+  række er et salg: `order_id`, `date`, `country`, `product`,
+  `quantity`, `amount`. Dataene laves ud fra et fast seed, så de er ens
+  hver gang. Delene 10, 20, 30 … 100 indeholder ingen `DK`-rækker; alle
+  andre dele indeholder `DK`-rækker blandt andre lande.
+- `filter` kører med `replicas: 10`. Hver replika læser sine egne dele
+  (GO-76) og sender kun `DK`-rækkerne videre. `generate` har én
+  replika (p = 0), så del n går til replika n mod 10, og replika 0 får
+  præcis delene 10, 20 … 100. Replika 0 laver derfor intet output og
+  skal alligevel afslutte med EOS (GO-80). Det er testens svære kant.
+- `sum` lægger `DK`-salget sammen pr. produkt (antal og beløb) og
+  skriver summen til resultatet `result` ved EOS (GO-48, 5.2).
+- Runnet er færdigt med fasen `Succeeded`, og `status.results` siger,
+  hvor resultatet ligger, og hvilken Secret der giver adgang.
+
+| ID | Niveau | Krav |
+|---|---|---|
+| GO-81 | SKAL | Testen kontrollerer, at summen i resultatet er lig med summen beregnet direkte fra `generate`s data. |
+| GO-84 | SKAL | Testen læser de ti `filter`-replikaers ack-filer (GO-36) og kontrollerer, at mængderne af ackede chunks er disjunkte, at deres forening er præcis 1–100, og at chunk n ligger hos replika n mod 10. Testen afhænger ikke af logs. |
+| GO-85 | SKAL | Testen kontrollerer, at replika 0's udgående manifest har nul chunks og `eos: true`, og at `sum` alligevel er nået til EOS. |
+| GO-82 | SKAL | Testen henter resultatet med oplysningerne i `status.results` og intet andet, så den også tester, at de er nok. |
+
+### 12.2 Testmiljø (Vagrant)
+
+`vagrant/deploy.sh` laver en Talos-VM med de samme tjenester som MCPipe
+bruger, i de samme versioner: Garage (S3) og Zot (container-registry).
+Hver `deploy.sh` laver nye nøgler, og `vagrant/credentials.sh` viser dem.
+Bruges Alpheus uden Vagrant, sættes S3-lager og registry op manuelt.
+
+| Tjeneste | Adresse fra værten | Hvad `credentials.sh` viser |
+|---|---|---|
+| Garage S3 | `https://<VM IP>:30900`, region `garage`, bucket `alpheus-data` | access key, secret key |
+| Garage dashboard | `https://<VM IP>:30901` | admin token (bruges til login) |
+| Garage internt | | rpc secret |
+| Zot | `https://registry.alpheus.test:30500`, ingen login | Zots egen S3-nøgle til bucket `alpheus-registry` |
+
+HTTPS går gennem en gateway (HAProxy) med et certifikat fra en CA, som
+`deploy.sh` laver i `vagrant/_out/`. Talos-noden stoler på CA'en, så den
+kan hente images fra Zot.
+
+VM'ens IP kan skifte fra deploy til deploy. Flow-filer bruger derfor det
+faste navn `registry.alpheus.test:30500` til images, ikke IP'en. Navnet
+står i certifikatet fra CA'en og peger på VM'en via Talos'
+statiske værtsnavne (`StaticHostConfig`, tidligere `extraHostEntries`).
+På værten skal navnet stå i `/etc/hosts` for at skubbe images;
+`credentials.sh` viser linjen.
+
+Zot har ingen login. Det er kun i orden, fordi VM'en ligger på libvirts
+host-only/NAT-netværk og ikke kan nås udefra. Det står i
+`vagrant/README.md`, så ingen eksponerer den ved et uheld.
 
 
 ## 13. Kodestil og CI
@@ -407,7 +531,7 @@ func main() {
 4. Agenten med `builtin`-signaler, kørt lokalt mod Garage.
 5. Controlleren med envtest.
 6. E2E på Talos i Vagrant-VM'en med testcase01.
-7. Fan-out og fan-in med testcase02.
+7. Fan-out og fan-in med testcase02, replikaer med testcase03-replicas.
 8. Genstart, backpressure og kaos-test.
 9. `stomp`-driveren.
 10. CLI, Helm-chart og første udgivelse `v0.1.0`.
@@ -421,3 +545,6 @@ func main() {
   til andre sprog i første omgang?
 - Skal manifest-segmentering (GO-32) være med i `v0.1.0`, eller er en
   øvre grænse for antal chunks pr. kant nok til at starte med?
+- Skal `status.results` pege på en særskilt nøgle med kun læseadgang til
+  `results/<run>/<uid>/` (fx `spec.storage.resultsSecretRef`), i stedet
+  for agenternes nøgle til hele bucketen (5.2)?
