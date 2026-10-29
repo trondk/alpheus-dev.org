@@ -1,0 +1,27 @@
+# testcase03-replicas (SPEC.md 12.1): a sales report in 100 parts, with no DK
+# rows in parts 10, 20 ... 100, filtered for DK by 10 replicas and summed per
+# product. Replica 0 gets only the parts without DK. The image digests are
+# placeholders until the test components exist.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase03-replicas
+spec:
+  steps:
+    - name: generate
+      image: registry.alpheus.test:30500/alpheus-test/generate@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      settings: {parts: 100, seed: 42}
+    - name: filter
+      image: registry.alpheus.test:30500/alpheus-test/filter@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      replicas: 10
+      settings: {field: country, in: [DK]}
+    - name: sum
+      image: registry.alpheus.test:30500/alpheus-test/sum@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  edges:
+    - {from: generate, to: filter}
+    - {from: filter, to: sum}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

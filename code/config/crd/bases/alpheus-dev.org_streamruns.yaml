@@ -1,0 +1,659 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: streamruns.alpheus-dev.org
+spec:
+  group: alpheus-dev.org
+  names:
+    categories:
+    - alpheus
+    kind: StreamRun
+    listKind: StreamRunList
+    plural: streamruns
+    shortNames:
+    - sr
+    singular: streamrun
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.stepsFinished
+      name: Steps
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    - jsonPath: .status.message
+      name: Error
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          StreamRun is one run of a flow: a graph of steps that run at the same
+          time and exchange Parquet chunks through object storage.
+
+          Create it to start the run, read its status to follow it, set
+          spec.cancel to stop it, and delete it to clean up.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              StreamRunSpec describes the flow. Everything except cancel is immutable
+              after creation.
+            properties:
+              cancel:
+                description: Cancel stops the run. It can be set to true once and
+                  not undone.
+                type: boolean
+              chunks:
+                default: {}
+                description: |-
+                  Chunks sets how output is cut into chunks and how far a producer may
+                  run ahead of its consumers.
+                properties:
+                  maxRows:
+                    default: 50000
+                    description: MaxRows is the largest number of rows in one chunk.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maxUnacked:
+                    default: 4
+                    description: |-
+                      MaxUnacked is how many chunks on an edge may wait for all consumers to
+                      ack them before the producer's Emit blocks.
+                    format: int32
+                    maximum: 1000
+                    minimum: 1
+                    type: integer
+                type: object
+              edges:
+                description: |-
+                  Edges connect the output of one step to the input of another. The
+                  graph must not have cycles; that is checked by the controller (and the
+                  webhook, when it is installed), not by the schema.
+                items:
+                  description: |-
+                    Edge connects an output of one step to the input of another. A step's
+                    output can have several edges (fan-out), and a step can have several
+                    incoming edges (fan-in).
+                  properties:
+                    from:
+                      description: From is the name of the producing step.
+                      maxLength: 20
+                      minLength: 1
+                      type: string
+                    output:
+                      default: default
+                      description: Output is the producer's named output, as given
+                        to Emit in the SDK.
+                      maxLength: 20
+                      minLength: 1
+                      pattern: ^[a-z]([a-z0-9-]*[a-z0-9])?$
+                      type: string
+                    to:
+                      description: To is the name of the consuming step.
+                      maxLength: 20
+                      minLength: 1
+                      type: string
+                  required:
+                  - from
+                  - to
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-map-keys:
+                - from
+                - output
+                - to
+                x-kubernetes-list-type: map
+              signals:
+                default: {}
+                description: |-
+                  Signals selects how agents tell each other that chunks are ready.
+                  Correctness never depends on signals; agents fall back to polling.
+                properties:
+                  driver:
+                    default: builtin
+                    description: Driver is the signal driver.
+                    enum:
+                    - builtin
+                    - stomp
+                    type: string
+                  stomp:
+                    description: Stomp configures the stomp driver.
+                    properties:
+                      address:
+                        description: Address of the broker, host:port.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      secretRef:
+                        description: |-
+                          SecretRef names a Secret in the run's namespace with the keys
+                          username and password. Only agents get it.
+                        maxLength: 253
+                        type: string
+                      tls:
+                        description: TLS turns on TLS to the broker.
+                        type: boolean
+                    required:
+                    - address
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: stomp must be set when, and only when, driver is stomp
+                  rule: (has(self.driver) && self.driver == 'stomp') == has(self.stomp)
+              steps:
+                description: Steps are the containers of the flow. Names are unique
+                  within the run.
+                items:
+                  description: Step is one container in the flow.
+                  properties:
+                    envFrom:
+                      description: |-
+                        EnvFrom lists Secrets and ConfigMaps the component gets as
+                        environment variables. The component gets no other credentials.
+                      items:
+                        description: EnvFromSource represents the source of a set
+                          of ConfigMaps or Secrets
+                        properties:
+                          configMapRef:
+                            description: The ConfigMap to select from
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the ConfigMap must be
+                                  defined
+                                type: boolean
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          prefix:
+                            description: |-
+                              Optional text to prepend to the name of each environment variable.
+                              May consist of any printable ASCII characters except '='.
+                            type: string
+                          secretRef:
+                            description: The Secret to select from
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret must be defined
+                                type: boolean
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                      maxItems: 16
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    image:
+                      description: |-
+                        Image of the component. It must have a digest
+                        (registry/name@sha256:...), unless the installation allows tags.
+                      maxLength: 512
+                      minLength: 1
+                      type: string
+                    maxRestarts:
+                      default: 3
+                      description: |-
+                        MaxRestarts is how many times the controller restarts a failed
+                        replica of the step before the run fails.
+                      format: int32
+                      maximum: 100
+                      minimum: 0
+                      type: integer
+                    name:
+                      description: |-
+                        Name of the step, unique within the run. It is part of pod names and
+                        object keys in storage.
+                      maxLength: 20
+                      minLength: 1
+                      pattern: ^[a-z]([a-z0-9-]*[a-z0-9])?$
+                      type: string
+                    replicas:
+                      default: 1
+                      description: |-
+                        Replicas is how many copies of the step run. The copies share the
+                        step's input: chunk n of the stream from producer replica p goes to
+                        replica (n + p) mod replicas.
+                      format: int32
+                      maximum: 64
+                      minimum: 1
+                      type: integer
+                    resources:
+                      description: Resources of the component container.
+                      properties:
+                        claims:
+                          description: |-
+                            Claims lists the names of resources, defined in spec.resourceClaims,
+                            that are used by this container.
+
+                            This field depends on the
+                            DynamicResourceAllocation feature gate.
+
+                            This field is immutable. It can only be set for containers.
+                          items:
+                            description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                            properties:
+                              name:
+                                description: |-
+                                  Name must match the name of one entry in pod.spec.resourceClaims of
+                                  the Pod where this field is used. It makes that resource available
+                                  inside a container.
+                                type: string
+                              request:
+                                description: |-
+                                  Request is the name chosen for a request in the referenced claim.
+                                  If empty, everything from the claim is made available, otherwise
+                                  only the result of this request.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        limits:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Limits describes the maximum amount of compute resources allowed.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                        requests:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Requests describes the minimum amount of compute resources required.
+                            If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                            otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                      type: object
+                    settings:
+                      description: |-
+                        Settings are passed to the component as they are. Their schema is the
+                        component's business.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                  - image
+                  - name
+                  type: object
+                maxItems: 64
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              storage:
+                description: Storage is the S3-compatible store that holds the chunks.
+                properties:
+                  bucket:
+                    description: |-
+                      Bucket holds the run's chunks under runs/<uid>/ and its results
+                      under results/<run>/<uid>/, where <uid> is the StreamRun's UID.
+                    maxLength: 63
+                    minLength: 3
+                    pattern: ^[a-z0-9][a-z0-9.-]*[a-z0-9]$
+                    type: string
+                  endpoint:
+                    description: Endpoint is the URL of the S3 API.
+                    maxLength: 512
+                    pattern: ^https?://
+                    type: string
+                  region:
+                    description: Region of the bucket. Most S3-compatible stores ignore
+                      it.
+                    maxLength: 63
+                    type: string
+                  secretRef:
+                    description: |-
+                      SecretRef names a Secret in the run's namespace with the keys
+                      AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. Only agents get it.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - bucket
+                - endpoint
+                - secretRef
+                type: object
+              ttlAfterFinished:
+                description: |-
+                  TTLAfterFinished is how long the run's pods and chunks are kept after
+                  it has finished. Not set means they are kept until the StreamRun is
+                  deleted.
+                type: string
+            required:
+            - steps
+            - storage
+            type: object
+            x-kubernetes-validations:
+            - message: steps is immutable
+              rule: self.steps == oldSelf.steps
+            - message: edges is immutable
+              rule: has(self.edges) == has(oldSelf.edges) && (!has(self.edges) ||
+                self.edges == oldSelf.edges)
+            - message: chunks is immutable
+              rule: has(self.chunks) == has(oldSelf.chunks) && (!has(self.chunks)
+                || self.chunks == oldSelf.chunks)
+            - message: storage is immutable
+              rule: self.storage == oldSelf.storage
+            - message: signals is immutable
+              rule: has(self.signals) == has(oldSelf.signals) && (!has(self.signals)
+                || self.signals == oldSelf.signals)
+            - message: ttlAfterFinished is immutable
+              rule: has(self.ttlAfterFinished) == has(oldSelf.ttlAfterFinished) &&
+                (!has(self.ttlAfterFinished) || self.ttlAfterFinished == oldSelf.ttlAfterFinished)
+            - message: cancel cannot be undone
+              rule: '!has(oldSelf.cancel) || !oldSelf.cancel || (has(self.cancel)
+                && self.cancel)'
+            - message: every edge must go from and to an existing step
+              rule: '!has(self.edges) || self.edges.all(e, self.steps.exists(s, s.name
+                == e.from) && self.steps.exists(s, s.name == e.to))'
+          status:
+            description: StreamRunStatus is written by the controller only.
+            properties:
+              conditions:
+                description: Conditions are Ready, Progressing and Degraded.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              edges:
+                description: Edges has one entry per edge.
+                items:
+                  description: EdgeStatus is the progress of one edge.
+                  properties:
+                    acked:
+                      description: |-
+                        Acked is how many chunks the consumer's replicas have acked. Chunks
+                        minus Acked is the edge's lag.
+                      format: int64
+                      type: integer
+                    chunks:
+                      description: Chunks is how many chunks the producer's replicas
+                        have committed.
+                      format: int64
+                      type: integer
+                    eos:
+                      description: EOS is true when every producer replica has committed
+                        its last chunk.
+                      type: boolean
+                    name:
+                      description: |-
+                        Name of the edge, as used in storage: <from>-<to>, or
+                        <from>.<output>-<to> for an output other than default.
+                      type: string
+                    rows:
+                      description: Rows is how many rows the producer's replicas have
+                        committed.
+                      format: int64
+                      type: integer
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              finishedAt:
+                description: FinishedAt is when the run reached Succeeded, Failed
+                  or Cancelled.
+                format: date-time
+                type: string
+              message:
+                description: Message says why the run failed, in words a person can
+                  act on.
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the generation the status was computed
+                  from.
+                format: int64
+                type: integer
+              phase:
+                description: Phase of the run.
+                enum:
+                - Pending
+                - Running
+                - Succeeded
+                - Failed
+                - Cancelled
+                type: string
+              results:
+                description: |-
+                  Results has one entry per result: an output that no edge goes from.
+                  It holds what is needed to fetch the result.
+                items:
+                  description: ResultStatus says where a result is and how to fetch
+                    it.
+                  properties:
+                    bucket:
+                      description: Bucket that holds the result.
+                      type: string
+                    chunks:
+                      description: Chunks is how many chunks the result has.
+                      format: int64
+                      type: integer
+                    endpoint:
+                      description: Endpoint is the URL of the S3 API, as in spec.storage.
+                      type: string
+                    output:
+                      description: Output of the step that the result comes from.
+                      type: string
+                    prefix:
+                      description: |-
+                        Prefix of the result's objects: results/<run>/<uid>/<step>/<output>/.
+                        Each replica writes a manifest and its chunks in <prefix><replica>/.
+                      type: string
+                    rows:
+                      description: Rows is how many rows the result has.
+                      format: int64
+                      type: integer
+                    secretRef:
+                      description: |-
+                        SecretRef names the Secret with keys for the bucket. For now it is
+                        spec.storage.secretRef, which gives access to the whole bucket.
+                      type: string
+                    step:
+                      description: Step that wrote the result.
+                      type: string
+                  required:
+                  - output
+                  - step
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - step
+                - output
+                x-kubernetes-list-type: map
+              startedAt:
+                description: StartedAt is when the first pod of the run started.
+                format: date-time
+                type: string
+              steps:
+                description: Steps has one entry per step.
+                items:
+                  description: StepStatus is the state of one step.
+                  properties:
+                    name:
+                      description: Name of the step.
+                      type: string
+                    phase:
+                      description: |-
+                        Phase of the step: Succeeded when all replicas have succeeded,
+                        Failed when one replica has used all its restarts.
+                      enum:
+                      - Pending
+                      - Running
+                      - Succeeded
+                      - Failed
+                      type: string
+                    replicas:
+                      description: Replicas has one entry per replica.
+                      items:
+                        description: ReplicaStatus is the state of one replica of
+                          a step.
+                        properties:
+                          attempt:
+                            description: |-
+                              Attempt is the current attempt, starting at 1. A new attempt starts
+                              only when the previous attempt's pod is gone. Agents write it to the
+                              manifests they own as epoch.
+                            format: int32
+                            type: integer
+                          index:
+                            description: Index of the replica, from 0.
+                            format: int32
+                            type: integer
+                          message:
+                            description: Message says why the replica failed.
+                            type: string
+                          phase:
+                            description: Phase of the replica.
+                            enum:
+                            - Pending
+                            - Running
+                            - Succeeded
+                            - Failed
+                            type: string
+                          pod:
+                            description: Pod is the name of the current attempt's
+                              pod.
+                            type: string
+                          restarts:
+                            description: Restarts is how many times the replica has
+                              been restarted.
+                            format: int32
+                            type: integer
+                        required:
+                        - index
+                        type: object
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - index
+                      x-kubernetes-list-type: map
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              stepsFinished:
+                description: StepsFinished is "<finished>/<total>", for kubectl get.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: name must be at most 40 characters, so pod names <run>-<step> stay
+            within 63
+          rule: size(self.metadata.name) <= 40
+    served: true
+    storage: true
+    subresources:
+      status: {}
