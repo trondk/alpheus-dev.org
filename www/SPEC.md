@@ -1,6 +1,7 @@
 # alpheus-dev.org — specifikation for hjemmesiden
 
-Status: udkast, 2026-10-29. Intet er bygget.
+Status: udkast, 2026-10-29. Siden findes som Hugo-site i `www/site/`, men
+er ikke udgivet endnu.
 
 Hjemmesiden er Alpheus' offentlige ansigt og dokumentation. Den forklarer,
 hvad Alpheus er, hjælper en platform engineer i gang på under ti
@@ -82,7 +83,7 @@ I rækkefølge, i én spalte:
 | ID | Niveau | Krav |
 |---|---|---|
 | WWW-7 | SKAL | Ingen påstande uden belæg: ingen ydelsestal, kundelogoer eller citater, før de findes og kan dokumenteres. |
-| WWW-8 | SKAL | Projektets modenhed står tydeligt på forsiden, så ingen tror, det er produktionsklart før det er. Fasen er én af *design* (ingen kode), *alpha*, *beta* eller *stable* og sættes ét sted i konfigurationen. I fasen *design* står der også, at eksemplet viser det planlagte API. |
+| WWW-8 | SKAL | Projektets modenhed står tydeligt på forsiden, så ingen tror, det er produktionsklart før det er. Fasen er én af *design* (intet kører endnu, selv om der kan være kode), *alpha*, *beta* eller *stable* og sættes ét sted i konfigurationen. I fasen *design* står der også ved eksemplet, hvor langt API'et er (fx at det findes som CRD, men at intet kører det endnu). |
 
 
 ## 4. Visuel identitet

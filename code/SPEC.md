@@ -1,6 +1,8 @@
 # Alpheus — implementeringsspecifikation (Go)
 
-Status: udkast, 2026-10-29. Intet er bygget.
+Status: udkast, 2026-10-29. Trin 1–3 i afsnit 15 er bygget: API-typer og
+CRD, chunks og lager, og komponent-SDK'et med lokal testmode. Agent og
+controller findes ikke endnu, så intet kører på Kubernetes.
 
 Denne specifikation beskriver, hvordan Alpheus skrives i Go. Den bygger på
 den funktionelle specifikation "Alpheus — specifikation" (StreamRun-CRD,
@@ -41,9 +43,14 @@ Alpheus består af fire programmer og ét bibliotek, alle i ét Go-modul:
 
 ## 3. Repo-struktur
 
+Go-modulet ligger i `code/` i repo'et. Testklyngen ligger i `vagrant/` i
+repo'ets rod og hjemmesiden i `www/`. Mapper markeret *(findes)* er
+bygget; resten er planlagt.
+
 ```
-alpheus/
-├── api/v1alpha1/          StreamRun-typer med kubebuilder-markører
+code/
+├── Makefile               generate, test, test-crd, test-s3 (findes)
+├── api/v1alpha1/          StreamRun-typer med kubebuilder-markører (findes)
 ├── cmd/
 │   ├── alpheus/           CLI
 │   ├── alpheus-controller/
@@ -51,17 +58,22 @@ alpheus/
 ├── internal/
 │   ├── controller/        reconcile-løkke, pod-spec, status
 │   ├── agent/             socket-server, ind- og udgange, genstart
-│   ├── chunk/             navngivning, manifest, checksum
+│   ├── chunk/             navngivning, manifest, ack-filer, checksum (findes)
+│   ├── pq/                Parquet-skrivning og -læsning af chunks (findes)
 │   ├── signal/            driver-interface
 │   │   ├── builtin/       gRPC-hub i controlleren og klient i agenten
 │   │   └── stomp/         STOMP-driver til fx Artemis
-│   ├── store/             S3-klient bag et lille interface
+│   ├── store/             S3-klient bag et lille interface (findes)
 │   └── version/
-├── sdk/                   offentligt komponent-SDK
+├── sdk/                   offentligt komponent-SDK (findes, uden agent-mode)
 ├── proto/                 component.proto og signal.proto
 ├── config/                genererede CRD-, RBAC- og webhook-manifester
+│   ├── crd/bases/         StreamRun-CRD'en (findes)
+│   └── samples/           eksempler, bl.a. testcase03-replicas (findes)
+├── hack/                  boilerplate og test-crd.sh (findes)
 ├── charts/alpheus/        Helm-chart
 ├── test/
+│   ├── components/        testkomponenter: filter (findes), generate og sum
 │   ├── e2e/               testcase01, testcase02, testcase03-replicas og fejltests
 │   └── fixtures/          input og golden files
 ├── docs/                  kilde til dokumentationen på hjemmesiden
@@ -76,21 +88,22 @@ følger SemVer-garantier.
 
 ## 4. Afhængigheder
 
-Hver afhængighed skal godkendes, før den tages i brug. Listen her er
-forslaget.
+Hver afhængighed skal godkendes, før den tages i brug. Kolonnen Status
+siger, om den er godkendt og i brug (med versionen i `go.mod`), eller
+stadig kun foreslået.
 
-| Formål | Bibliotek | Licens |
-|---|---|---|
-| Kubernetes-klient og controller | `sigs.k8s.io/controller-runtime`, `k8s.io/client-go` | Apache 2.0 |
-| CRD-generering | `sigs.k8s.io/controller-tools` (kun build) | Apache 2.0 |
-| Parquet og Arrow | `github.com/apache/arrow-go` (Parquet-pakken) | Apache 2.0 |
-| S3 | `github.com/minio/minio-go/v7` | Apache 2.0 |
-| gRPC | `google.golang.org/grpc`, `google.golang.org/protobuf` | Apache 2.0 / BSD |
-| STOMP | `github.com/go-stomp/stomp/v3` | Apache 2.0 |
-| CLI | `github.com/spf13/cobra` | Apache 2.0 |
-| Metrics | `github.com/prometheus/client_golang` | Apache 2.0 |
-| Logning | `log/slog` fra standardbiblioteket | BSD |
-| Test | `sigs.k8s.io/controller-runtime/pkg/envtest` | Apache 2.0 |
+| Formål | Bibliotek | Licens | Status |
+|---|---|---|---|
+| Kubernetes-klient og controller | `sigs.k8s.io/controller-runtime`, `k8s.io/client-go` | Apache 2.0 | Godkendt, i brug (v0.25.2; k8s.io v0.37.0) |
+| CRD-generering | `sigs.k8s.io/controller-tools` (kun build) | Apache 2.0 | Godkendt, i brug (v0.23.0, `go tool`) |
+| Parquet og Arrow | `github.com/apache/arrow-go` (Parquet-pakken) | Apache 2.0 | Godkendt, i brug (v18.8.0) |
+| S3 | `github.com/minio/minio-go/v7` | Apache 2.0 | Godkendt, i brug (v7.4.1) |
+| gRPC | `google.golang.org/grpc`, `google.golang.org/protobuf` | Apache 2.0 / BSD | Foreslået (trin 4) |
+| STOMP | `github.com/go-stomp/stomp/v3` | Apache 2.0 | Foreslået (trin 9) |
+| CLI | `github.com/spf13/cobra` | Apache 2.0 | Foreslået (trin 10) |
+| Metrics | `github.com/prometheus/client_golang` | Apache 2.0 | Foreslået |
+| Logning | `log/slog` fra standardbiblioteket | BSD | I brug |
+| Test | `sigs.k8s.io/controller-runtime/pkg/envtest` | Apache 2.0 | Foreslået (trin 5) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -528,9 +541,12 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
 
 ## 15. Rækkefølge for implementeringen
 
-1. `api/v1alpha1` og genererede CRD'er.
+1. `api/v1alpha1` og genererede CRD'er. *Færdig*: 22 CRD-tests mod
+   API-serveren i testklyngen (`make test-crd`).
 2. `internal/chunk` og `internal/store` med unit-tests og Garage.
-3. `sdk` med lokal testmode og en filter-komponent.
+   *Færdig*: unit- og fuzz-tests, lagertests mod Garage (`make test-s3`).
+3. `sdk` med lokal testmode og en filter-komponent. *Færdig*, undtagen
+   agent-mode, der kommer med agenten i trin 4.
 4. Agenten med `builtin`-signaler, kørt lokalt mod Garage.
 5. Controlleren med envtest.
 6. E2E på Talos i Vagrant-VM'en med testcase01.
