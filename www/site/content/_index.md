@@ -12,7 +12,7 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
 
 ## A minimal flow
 
-A run is one `StreamRun` resource. {{< planned >}}This is the planned API; it does not exist yet.{{< /planned >}}
+A run is one `StreamRun` resource. {{< planned >}}The API exists as a CRD, but nothing runs it yet.{{< /planned >}}
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1

@@ -2,8 +2,8 @@
 
 [design]
   name = "design phase"
-  short = "There is no code yet."
-  long = "The specifications are being agreed, and there is no code to run. Do not plan production use. The next phases are alpha, beta and stable, and this page will say which one applies."
+  short = "Early code exists, but nothing runs on Kubernetes yet."
+  long = "The API, the chunk format and the component SDK exist as code, but the agent and controller that run a flow do not yet. Do not plan production use. The next phases are alpha, beta and stable, and this page will say which one applies."
 
 [alpha]
   name = "alpha"

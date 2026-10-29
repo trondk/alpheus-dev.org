@@ -10,9 +10,10 @@ nothing but object storage in between.
                        chunks in object storage
 ```
 
-> **Status: design phase.** There is no code yet. This repository holds
-> the specifications for the program and the website. Nothing here is
-> ready for use, and everything may change.
+> **Status: design phase.** Early code exists: the API, the chunk format
+> and the component SDK. The agent and controller that run a flow do not
+> exist yet, so nothing runs on Kubernetes. Nothing here is ready for use,
+> and everything may change.
 
 
 ## Why "Alpheus"
@@ -32,6 +33,8 @@ appears in the next.
   S3-compatible store. Only small signals ("chunk 17 is ready") pass
   between them, and even those are optional: the manifest in object
   storage is the source of truth.
+- **Parallel steps.** A step can run as several replicas that share
+  its input: each chunk goes to exactly one replica.
 - **Restartable by design.** A step that dies restarts and continues
   from the first chunk it had not acknowledged.
 - **Backpressure built in.** A fast producer waits when its consumer
@@ -42,6 +45,9 @@ appears in the next.
 - **Kubernetes-native.** A run is one `StreamRun` custom resource.
   Create it to start the run, read its status to follow it, delete it
   to stop it and clean up.
+- **Results stay.** A step's output that no other step reads is a
+  result. It is kept after the run is cleaned up, and the run's status
+  says where it is and which credentials read it.
 
 Alpheus needs only the Kubernetes API and an S3 endpoint: no host
 access, no privileged containers, no node changes. It is designed to
@@ -50,7 +56,7 @@ run on immutable distributions such as Talos.
 
 ## What it looks like
 
-The planned API. It does not exist yet.
+The API exists as a CRD, but nothing runs it yet.
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1
@@ -116,9 +122,9 @@ repository is the only copy, and issues can be opened here.
 ## Roadmap
 
 1. Agree on the specifications.
-2. API types and generated CRD.
-3. Chunk and manifest handling against an S3-compatible store.
-4. Component SDK with a local test mode.
+2. API types and generated CRD. *Done.*
+3. Chunk and manifest handling against an S3-compatible store. *Done.*
+4. Component SDK with a local test mode. *Done.*
 5. Agent, then controller.
 6. End-to-end tests on Talos, including restarts and backpressure.
 7. First release, `v0.1.0`.
@@ -134,8 +140,8 @@ hosted.
 ## Contributing
 
 The project is in the design phase. Comments on the specifications are
-welcome as issues on Forgejo. Code contributions will open once the
-first implementation exists. See `CONTRIBUTING.md` when it is added.
+welcome as issues on Forgejo. Code contributions will open once a flow
+runs end to end. See `CONTRIBUTING.md` when it is added.
 
 
 ## Security
