@@ -99,9 +99,17 @@ alpheus watch sales-dk
 
 ## Repository layout
 
-| Folder | Contents |
+The Go module `alpheus-dev.org/alpheus` is the repository root.
+
+| Path | Contents |
 |---|---|
-| [`code/`](code/) | Implementation specification for the Go program: controller, agent, CLI and component SDK |
+| [`SPEC.md`](SPEC.md) | Implementation specification for the Go program: controller, agent, CLI and component SDK |
+| [`api/`](api/) | The `StreamRun` API types (public) |
+| [`sdk/`](sdk/) | The component SDK (public) |
+| [`internal/`](internal/) | Chunk protocol, object storage and the rest of the program (private) |
+| [`config/`](config/) | Generated CRD and samples |
+| [`test/`](test/) | Test components and end-to-end tests |
+| [`vagrant/`](vagrant/) | Local test cluster: Talos in a VM with Garage and Zot |
 | [`www/`](www/) | Specification and Hugo site for the website at [alpheus-dev.org](https://alpheus-dev.org) |
 
 The specifications are currently written in Danish. English versions

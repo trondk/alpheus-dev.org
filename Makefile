@@ -18,13 +18,13 @@ test:
 	go test -race ./...
 
 # Checks the CRD's schema and CEL rules against the cluster in KUBECONFIG,
-# for example the Vagrant test cluster (source ../vagrant/credentials.sh).
+# for example the Vagrant test cluster (source vagrant/credentials.sh).
 test-crd: generate
 	hack/test-crd.sh
 
 # Runs internal/store's tests against Garage in the Vagrant test cluster,
 # over HTTPS through the gateway, trusting the test CA.
-VAGRANT := $(abspath ../vagrant)
+VAGRANT := $(abspath vagrant)
 test-s3:
 	. $(VAGRANT)/_out/secrets.env && \
 	ALPHEUS_TEST_S3_ENDPOINT=https://$$($(VAGRANT)/talos.sh ip):30900 \
