@@ -1,0 +1,14 @@
+# Single node: the control plane also runs workloads. Since Talos 1.14 this
+# is done by removing the taint, not with cluster.allowSchedulingOnControlPlanes.
+apiVersion: v1alpha1
+kind: KubeNodeConfig
+taints:
+  node-role.kubernetes.io/control-plane:
+    $patch: delete
+---
+# Vagrant cannot set the hostname without SSH, so Talos sets it.
+apiVersion: v1alpha1
+kind: HostnameConfig
+auto:
+  $patch: delete
+hostname: alpheus-talos
