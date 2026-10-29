@@ -18,32 +18,39 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
-
-	"github.com/apache/arrow-go/v18/arrow"
+	"strings"
 
 	"alpheus-dev.org/alpheus/internal/chunk"
-	"alpheus-dev.org/alpheus/internal/pq"
 )
 
-// DefaultMaxRows is the largest number of rows in one output chunk in local
-// mode, the same default as spec.chunks.maxRows.
-const DefaultMaxRows = 50000
+// Files local mode writes next to the outputs. Output names start with a
+// letter, so these never collide with an output's folder.
+const (
+	SummaryFile  = "_summary.json"
+	ErrorLogFile = "_errors.jsonl"
+)
 
-// LocalConfig configures local mode (GO-47).
+// LocalConfig configures local mode (GO-47, GO-87).
 type LocalConfig struct {
-	// InputDir holds the input chunks as *.parquet files. They are read in
-	// name order, and the n-th file is chunk n. Empty means the component
-	// has no input (a source).
-	InputDir string
+	// Inputs maps each port to a folder of input chunks. Every file in a
+	// folder is a chunk; they are read in name order, and the n-th file
+	// is chunk n. No inputs means the component is a source.
+	Inputs map[string]string
 
 	// OutputDir gets one folder per output, with the output's chunks as
-	// part-000001.parquet, part-000002.parquet and so on.
+	// part-000001.<ext> and so on and a manifest.json in the format of
+	// spec 7.3, and the files _summary.json (counters, errors, warnings)
+	// and _errors.jsonl (the error log).
 	OutputDir string
 
 	// Settings are the step's settings as JSON.
@@ -54,9 +61,15 @@ type LocalConfig struct {
 	// (GO-76). Replicas 0 means 1.
 	Replica, Replicas int
 
-	// MaxRows ends an output chunk after this many rows. 0 means
-	// DefaultMaxRows.
-	MaxRows int64
+	// MaxBytes is the largest output chunk, as spec.chunks.maxBytes; 0
+	// means no limit (GO-105).
+	MaxBytes int64
+
+	// Step names the step in error log entries; empty means "local".
+	Step string
+
+	// Log gets progress reports; nil means they are dropped.
+	Log *slog.Logger
 }
 
 // RunLocal runs the component in local mode and returns its error. Tests
@@ -71,51 +84,102 @@ func RunLocal(ctx context.Context, cfg LocalConfig, h Handler) error {
 	if cfg.Replicas < 1 || cfg.Replica < 0 || cfg.Replica >= cfg.Replicas {
 		return fmt.Errorf("%w: replica %d of %d", ErrUsage, cfg.Replica, cfg.Replicas)
 	}
-	if cfg.MaxRows <= 0 {
-		cfg.MaxRows = DefaultMaxRows
+	if cfg.Step == "" {
+		cfg.Step = "local"
 	}
-	var files []string
-	if cfg.InputDir != "" {
-		var err error
-		files, err = filepath.Glob(filepath.Join(cfg.InputDir, "*.parquet"))
-		if err != nil {
-			return fmt.Errorf("%w: input folder: %w", ErrUsage, err)
-		}
-		if len(files) == 0 {
-			if _, err := os.Stat(cfg.InputDir); err != nil {
-				return fmt.Errorf("%w: input folder: %w", ErrUsage, err)
-			}
-		}
-		sort.Strings(files)
+	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
+		return fmt.Errorf("output folder: %w", err)
 	}
-
-	l := &local{cfg: cfg, files: files, outs: map[string]*localOutput{}}
-	err := h(ctx, l, l)
+	l, err := newLocal(cfg)
+	if err != nil {
+		return err
+	}
+	err = h(withObserver(ctx, l.obs), l, l)
 	if err == nil {
-		err = l.finish(ctx)
+		err = l.finish(withObserver(ctx, l.obs))
 	}
-	if cerr := l.closeAll(); err == nil {
-		err = cerr
+	if serr := l.writeSummary(); err == nil {
+		err = serr
 	}
 	return err
 }
 
 type local struct {
-	cfg      LocalConfig
-	files    []string
-	outs     map[string]*localOutput
-	eosFns   []func(context.Context, Output) error
-	iterated bool // Batches has been called
-	consumed bool // every input chunk has been read
-	eosDone  bool
+	cfg    LocalConfig
+	obs    *observer
+	ports  []string
+	queues map[string][]Chunk
+	pos    map[string]int
+	next   int // port to try first in Chunks, for round robin
+
+	current *Chunk  // the input chunk being handled
+	open    []*File // output files created and not closed
+	closed  []*File // closed, waiting for the input chunk to be done
+	outs    map[string]*localOutput
+	eosFns  []func(context.Context, Output) error
+	broken  bool // a loop over chunks was left before a chunk was done
 }
 
 type localOutput struct {
-	dir    string
-	schema *arrow.Schema
-	n      int64
-	f      *os.File
-	w      *pq.Writer
+	dir      string
+	manifest *chunk.Manifest
+	stream   chunk.Stream
+}
+
+func newLocal(cfg LocalConfig) (*local, error) {
+	l := &local{
+		cfg:    cfg,
+		queues: map[string][]Chunk{},
+		pos:    map[string]int{},
+		outs:   map[string]*localOutput{},
+	}
+	l.obs = newObserver(cfg.Step, cfg.Replica, func(text string) {
+		if cfg.Log != nil {
+			cfg.Log.Info("progress", "text", text)
+		}
+	})
+	for port, dir := range cfg.Inputs {
+		chunks, err := readInputs(port, dir, cfg.Replica, cfg.Replicas)
+		if err != nil {
+			return nil, err
+		}
+		l.ports = append(l.ports, port)
+		l.queues[port] = chunks
+	}
+	sort.Strings(l.ports)
+	return l, nil
+}
+
+// readInputs lists the chunks of one port that this replica gets.
+func readInputs(port, dir string, replica, replicas int) ([]Chunk, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("%w: input %s: %w", ErrUsage, port, err)
+	}
+	var chunks []Chunk
+	n := int64(0)
+	for _, e := range entries { // os.ReadDir sorts by name
+		if !e.Type().IsRegular() {
+			continue
+		}
+		n++
+		if chunk.Assign(n, 0, replicas) != replica {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			return nil, fmt.Errorf("input %s: %w", port, err)
+		}
+		chunks = append(chunks, Chunk{
+			Port:  port,
+			Step:  port,
+			N:     n,
+			Path:  filepath.Join(dir, e.Name()),
+			Ext:   strings.ToLower(strings.TrimPrefix(filepath.Ext(e.Name()), ".")),
+			Bytes: info.Size(),
+		})
+	}
+	return chunks, nil
 }
 
 func (l *local) Replica() int  { return l.cfg.Replica }
@@ -125,189 +189,289 @@ func (l *local) Settings(v any) error { return decodeSettings(l.cfg.Settings, v)
 
 func (l *local) OnEOS(fn func(context.Context, Output) error) { l.eosFns = append(l.eosFns, fn) }
 
-func (l *local) Batches(ctx context.Context) iter.Seq2[arrow.RecordBatch, error] {
-	return func(yield func(arrow.RecordBatch, error) bool) {
-		if l.iterated {
-			yield(nil, errors.New("Batches can be iterated once"))
+func (l *local) Port(name string) Port { return localPort{l: l, name: name} }
+
+type localPort struct {
+	l    *local
+	name string
+}
+
+func (p localPort) Chunks(ctx context.Context) iter.Seq2[Chunk, error] {
+	return func(yield func(Chunk, error) bool) {
+		if _, ok := p.l.queues[p.name]; !ok {
+			yield(Chunk{}, fmt.Errorf("%w: no input port %q", ErrUsage, p.name))
 			return
 		}
-		l.iterated = true
-		for i, name := range l.files {
-			n := int64(i + 1)
-			if chunk.Assign(n, 0, l.cfg.Replicas) != l.cfg.Replica {
-				continue
-			}
-			if !l.readChunk(ctx, name, yield) {
+		for p.l.pos[p.name] < len(p.l.queues[p.name]) {
+			if !p.l.deliver(ctx, p.name, yield) {
 				return
 			}
-			// The chunk is done: everything emitted for it ends here, as
-			// the agent ends output chunks at an input chunk's Done.
-			if err := l.cutAll(); err != nil {
-				yield(nil, err)
-				return
-			}
-		}
-		l.consumed = true
-		if err := l.runEOS(ctx); err != nil {
-			yield(nil, err)
 		}
 	}
 }
 
-// readChunk yields the batches of one input file; false means stop.
-func (l *local) readChunk(ctx context.Context, name string, yield func(arrow.RecordBatch, error) bool) bool {
-	f, err := os.Open(name)
-	if err != nil {
-		yield(nil, fmt.Errorf("input chunk: %w", err))
+// Chunks takes one chunk from each port in turn, ports in name order, so
+// local runs are deterministic (as inputOrder: deterministic, GO-112).
+func (l *local) Chunks(ctx context.Context) iter.Seq2[Chunk, error] {
+	return func(yield func(Chunk, error) bool) {
+		for {
+			port, ok := l.nextPort()
+			if !ok {
+				return
+			}
+			if !l.deliver(ctx, port, yield) {
+				return
+			}
+		}
+	}
+}
+
+func (l *local) nextPort() (string, bool) {
+	for i := range l.ports {
+		port := l.ports[(l.next+i)%len(l.ports)]
+		if l.pos[port] < len(l.queues[port]) {
+			l.next = (l.next + i + 1) % len(l.ports)
+			return port, true
+		}
+	}
+	return "", false
+}
+
+// deliver yields the next chunk of a port and marks it done when the loop
+// asks for more or ends; false means stop.
+func (l *local) deliver(ctx context.Context, port string, yield func(Chunk, error) bool) bool {
+	if err := ctx.Err(); err != nil {
+		yield(Chunk{}, err)
 		return false
 	}
-	defer f.Close()
-	for b, err := range pq.Read(ctx, f) {
-		if err != nil {
-			yield(nil, fmt.Errorf("input chunk %s: %w", filepath.Base(name), err))
-			return false
-		}
-		if !yield(b, nil) {
-			return false
-		}
+	c := l.queues[port][l.pos[port]]
+	l.current = &c
+	l.obs.begin(fmt.Sprintf("%s/%s/%d", c.Port, c.Step, c.N))
+	if !yield(c, nil) {
+		l.broken = true
+		return false
+	}
+	l.pos[port]++
+	if err := l.done(); err != nil {
+		yield(Chunk{}, err)
+		return false
 	}
 	return true
 }
 
-func (l *local) runEOS(ctx context.Context) error {
-	if l.eosDone {
-		return nil
+// done finishes the current input chunk: it closes its open output files
+// and commits its output, counts and log entries together (GO-86, GO-90).
+func (l *local) done() error {
+	for len(l.open) > 0 {
+		if err := l.open[0].Close(); err != nil {
+			return err
+		}
 	}
-	l.eosDone = true
+	src := l.current
+	l.current = nil
+	return l.commit(src)
+}
+
+// commit puts closed output files in their manifests and writes the log
+// entries reported since the last commit. src is the input chunk they came
+// from, nil for a source or for OnEOS.
+func (l *local) commit(src *Chunk) error {
+	counts, lines, err := l.obs.commit()
+	if err != nil {
+		return err
+	}
+	closed := l.closed
+	l.closed = nil
+	for i, f := range closed {
+		c := chunk.Chunk{Ext: f.ext, Bytes: f.size, SHA256: f.sha256}
+		// Counts go with the chunk they were reported for. For a step with
+		// input they also count chunks that gave no output, so local mode
+		// keeps them in _summary.json only.
+		if src == nil && i == len(closed)-1 {
+			c.Counts = counts
+		}
+		if src != nil {
+			c.Src = &chunk.Source{Edge: src.Port, Replica: src.Replica, N: src.N}
+		}
+		if err := l.put(f, c); err != nil {
+			return err
+		}
+	}
+	if src != nil {
+		stream := src.Port + "/" + fmt.Sprint(src.Replica)
+		for _, o := range l.outs {
+			o.manifest.SetConsumed(stream, src.N)
+		}
+	}
+	if err := l.writeManifests(); err != nil {
+		return err
+	}
+	return l.appendLog(lines)
+}
+
+// put renames a closed file to its chunk name and adds it to the manifest.
+func (l *local) put(f *File, c chunk.Chunk) error {
+	o := l.outs[f.output]
+	c.N = o.manifest.NextN()
+	if err := os.Rename(f.path, filepath.Join(o.dir, filepath.Base(o.stream.ChunkKey(c.N, c.Ext)))); err != nil {
+		return fmt.Errorf("output %s: %w", f.output, err)
+	}
+	if _, err := o.manifest.Append(c); err != nil {
+		return fmt.Errorf("output %s: %w", f.output, err)
+	}
+	return nil
+}
+
+func (l *local) Create(ctx context.Context, output, ext string) (*File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if output == "" {
+		output = DefaultOutput
+	}
+	if !chunk.ValidExt(ext) {
+		return nil, fmt.Errorf("%w: extension %q: want lower-case letters and digits, at most 16", ErrUsage, ext)
+	}
+	o, ok := l.outs[output]
+	if !ok {
+		dir := filepath.Join(l.cfg.OutputDir, output)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("output %s: %w", output, err)
+		}
+		o = &localOutput{
+			dir:      dir,
+			manifest: chunk.NewManifest("local", "local", output, l.cfg.Replica, 1),
+			stream:   chunk.EdgeStream("local", output, l.cfg.Replica),
+		}
+		l.outs[output] = o
+	}
+	// A temporary name until the chunk is committed and gets its number.
+	f, err := os.CreateTemp(o.dir, ".tmp-*."+ext)
+	if err != nil {
+		return nil, fmt.Errorf("output %s: %w", output, err)
+	}
+	file := &File{f: f, path: f.Name(), output: output, ext: ext, maxBytes: l.cfg.MaxBytes, onClose: l.closedFile}
+	l.open = append(l.open, file)
+	return file, nil
+}
+
+// closedFile is called when the component closes an output file. A source's
+// chunk is committed at once (GO-91); otherwise it waits for Done (GO-90).
+func (l *local) closedFile(f *File) error {
+	l.open = slices.DeleteFunc(l.open, func(o *File) bool { return o == f })
+	l.closed = append(l.closed, f)
+	if l.current == nil && len(l.cfg.Inputs) == 0 {
+		return l.commit(nil)
+	}
+	return nil
+}
+
+// finish runs after the handler returned nil: all input must have been
+// read, then OnEOS runs and every output ends.
+func (l *local) finish(ctx context.Context) error {
+	if l.broken {
+		return errors.New("component returned in the middle of an input chunk")
+	}
+	for _, port := range l.ports {
+		if l.pos[port] < len(l.queues[port]) {
+			return fmt.Errorf("component returned before reading all of input %s", port)
+		}
+	}
 	for _, fn := range l.eosFns {
 		if err := fn(ctx, l); err != nil {
 			return fmt.Errorf("on EOS: %w", err)
 		}
 	}
-	return l.cutAll()
-}
-
-// finish runs after the handler returned nil. A component with input must
-// have read all of it; a source never calls Batches.
-func (l *local) finish(ctx context.Context) error {
-	if l.iterated && !l.consumed {
-		return errors.New("component returned before reading all its input")
-	}
-	if !l.iterated && len(l.files) > 0 {
-		return errors.New("component returned without reading its input")
-	}
-	return l.runEOS(ctx)
-}
-
-func (l *local) Emit(ctx context.Context, output string, batch arrow.RecordBatch) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if output == "" {
-		output = DefaultOutput
-	}
-	o, err := l.output(output)
-	if err != nil {
-		return err
-	}
-	if o.schema == nil {
-		o.schema = batch.Schema()
-	} else if !batch.Schema().Equal(o.schema) {
-		return fmt.Errorf("output %s: %w: got %s, want %s", output, pq.ErrSchema, batch.Schema(), o.schema)
-	}
-	if batch.NumRows() == 0 {
-		return nil
-	}
-	// Split at MaxRows, so a large batch still gives bounded chunks.
-	for off := int64(0); off < batch.NumRows(); {
-		if o.w == nil {
-			if err := o.open(); err != nil {
-				return err
-			}
-		}
-		take := min(batch.NumRows()-off, l.cfg.MaxRows-o.w.Rows())
-		part := batch.NewSlice(off, off+take)
-		err := o.w.Write(part)
-		part.Release()
-		if err != nil {
-			return fmt.Errorf("output %s: %w", output, err)
-		}
-		off += take
-		if o.w.Rows() >= l.cfg.MaxRows {
-			if err := o.cut(); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (l *local) Flush(ctx context.Context, output string) error {
-	if output == "" {
-		output = DefaultOutput
-	}
-	if o, ok := l.outs[output]; ok {
-		return o.cut()
-	}
-	return nil
-}
-
-func (l *local) output(name string) (*localOutput, error) {
-	if o, ok := l.outs[name]; ok {
-		return o, nil
-	}
-	dir := filepath.Join(l.cfg.OutputDir, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("output %s: %w", name, err)
-	}
-	o := &localOutput{dir: dir}
-	l.outs[name] = o
-	return o, nil
-}
-
-func (l *local) cutAll() error {
-	for _, o := range l.outs {
-		if err := o.cut(); err != nil {
+	for len(l.open) > 0 {
+		if err := l.open[0].Close(); err != nil {
 			return err
 		}
 	}
-	return nil
-}
-
-// closeAll ends every open chunk, also when the component failed, so no
-// file is left open.
-func (l *local) closeAll() error {
-	var errs []error
+	if err := l.commit(nil); err != nil {
+		return err
+	}
 	for _, o := range l.outs {
-		errs = append(errs, o.cut())
+		o.manifest.End()
 	}
-	return errors.Join(errs...)
+	return l.writeManifests()
 }
 
-func (o *localOutput) open() error {
-	o.n++
-	f, err := os.Create(filepath.Join(o.dir, fmt.Sprintf("part-%06d.parquet", o.n)))
-	if err != nil {
-		return err
+func (l *local) writeManifests() error {
+	for name, o := range l.outs {
+		data, err := o.manifest.Marshal()
+		if err != nil {
+			return fmt.Errorf("output %s: %w", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(o.dir, "manifest.json"), data, 0o644); err != nil {
+			return fmt.Errorf("output %s: %w", name, err)
+		}
 	}
-	w, err := pq.NewWriter(f, o.schema, 0)
-	if err != nil {
-		f.Close()
-		return err
-	}
-	o.f, o.w = f, w
 	return nil
 }
 
-// cut ends the current chunk, if one is open.
-func (o *localOutput) cut() error {
-	if o.w == nil {
+func (l *local) appendLog(lines [][]byte) error {
+	if len(lines) == 0 {
 		return nil
 	}
-	err := o.w.Close()
-	if cerr := o.f.Close(); err == nil {
-		err = cerr
+	f, err := os.OpenFile(filepath.Join(l.cfg.OutputDir, ErrorLogFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("error log: %w", err)
 	}
-	o.f, o.w = nil, nil
-	return err
+	for _, line := range lines {
+		f.Write(append(line, '\n'))
+	}
+	return f.Close()
+}
+
+func (l *local) writeSummary() error {
+	data, err := json.MarshalIndent(l.obs.summary(), "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(l.cfg.OutputDir, SummaryFile), append(data, '\n'), 0o644)
+}
+
+// File is an output chunk being written: one file from Create to Close
+// (GO-104). Write to it, or let another tool write to Path.
+type File struct {
+	f        *os.File
+	path     string
+	output   string
+	ext      string
+	maxBytes int64
+	onClose  func(*File) error
+	closed   bool
+	size     int64
+	sha256   string
+}
+
+func (f *File) Write(p []byte) (int, error) { return f.f.Write(p) }
+
+// Path is the file's local path, for tools that write by name.
+func (f *File) Path() string { return f.path }
+
+// Close finishes the chunk. Its size and SHA-256 are taken from the file as
+// it is now, so it also covers what other tools wrote to Path.
+func (f *File) Close() error {
+	if f.closed {
+		return fmt.Errorf("output %s: chunk closed twice", f.output)
+	}
+	f.closed = true
+	if err := f.f.Close(); err != nil {
+		return fmt.Errorf("output %s: %w", f.output, err)
+	}
+	r, err := os.Open(f.path)
+	if err != nil {
+		return fmt.Errorf("output %s: %w", f.output, err)
+	}
+	defer r.Close()
+	hw := chunk.NewHashingWriter(io.Discard)
+	if _, err := io.Copy(hw, r); err != nil {
+		return fmt.Errorf("output %s: %w", f.output, err)
+	}
+	f.size, f.sha256 = hw.Size(), hw.Sum()
+	if f.maxBytes > 0 && f.size > f.maxBytes {
+		return fmt.Errorf("output %s: chunk is %d bytes, more than maxBytes %d", f.output, f.size, f.maxBytes)
+	}
+	return f.onClose(f)
 }

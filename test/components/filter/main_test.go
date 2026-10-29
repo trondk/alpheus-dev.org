@@ -18,29 +18,22 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/apache/arrow-go/v18/arrow"
-	"github.com/apache/arrow-go/v18/arrow/array"
-	"github.com/apache/arrow-go/v18/arrow/memory"
-
-	"alpheus-dev.org/alpheus/internal/pq"
 	"alpheus-dev.org/alpheus/sdk"
 )
 
-var schema = arrow.NewSchema([]arrow.Field{
-	{Name: "country", Type: arrow.BinaryTypes.String},
-	{Name: "amount", Type: arrow.PrimitiveTypes.Float64},
-}, nil)
-
 var dk = []byte(`{"field": "country", "in": ["DK"]}`)
 
-// parts writes 10 input chunks like testcase03-replicas: every part has
-// 3 DK rows among others, except part 10, which has none.
+// parts writes 10 CSV chunks like testcase03-replicas: every part has 3 DK
+// rows among others, except part 10, which has none.
 func parts(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -49,64 +42,70 @@ func parts(t *testing.T) string {
 		if n == 10 {
 			countries = []string{"SE", "NO", "DE"}
 		}
-		f, err := os.Create(filepath.Join(dir, fmt.Sprintf("part-%06d.parquet", n)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		w, err := pq.NewWriter(f, schema, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b := array.NewRecordBuilder(memory.DefaultAllocator, schema)
+		var b strings.Builder
+		b.WriteString("order_id,country,amount\n")
 		for i, c := range countries {
-			b.Field(0).(*array.StringBuilder).Append(c)
-			b.Field(1).(*array.Float64Builder).Append(float64(n*100 + i))
+			fmt.Fprintf(&b, "%d,%s,%d.50\n", n*100+i, c, i)
 		}
-		rec := b.NewRecordBatch()
-		b.Release()
-		if err := w.Write(rec); err != nil {
-			t.Fatal(err)
-		}
-		rec.Release()
-		if err := w.Close(); err != nil {
-			t.Fatal(err)
-		}
-		f.Close()
+		write(t, filepath.Join(dir, fmt.Sprintf("part-%06d.csv", n)), b.String())
 	}
 	return dir
 }
 
-// output returns the countries of every row in the default output.
-func output(t *testing.T, dir string) []string {
+func write(t *testing.T, path, content string) {
 	t.Helper()
-	files, _ := filepath.Glob(filepath.Join(dir, sdk.DefaultOutput, "*.parquet"))
-	var countries []string
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// countries returns the country of every row in the default output.
+func countries(t *testing.T, dir string) []string {
+	t.Helper()
+	files, _ := filepath.Glob(filepath.Join(dir, sdk.DefaultOutput, "part-*.csv"))
+	var got []string
 	for _, name := range files {
 		f, err := os.Open(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for b, err := range pq.Read(context.Background(), f) {
-			if err != nil {
-				t.Fatal(err)
-			}
-			col := b.Column(0).(*array.String)
-			for i := range col.Len() {
-				countries = append(countries, col.Value(i))
-			}
-		}
+		recs, err := csv.NewReader(f).ReadAll()
 		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rec := range recs[1:] {
+			got = append(got, rec[1])
+		}
 	}
-	return countries
+	return got
+}
+
+func summary(t *testing.T, dir string) sdk.Summary {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, sdk.SummaryFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s sdk.Summary
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func run(t *testing.T, cfg sdk.LocalConfig) error {
+	t.Helper()
+	return sdk.RunLocal(context.Background(), cfg, handle)
 }
 
 func TestFilterKeepsOnlyDK(t *testing.T) {
 	out := t.TempDir()
-	cfg := sdk.LocalConfig{InputDir: parts(t), OutputDir: out, Settings: dk}
-	if err := sdk.RunLocal(context.Background(), cfg, handle); err != nil {
+	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: parts(t)}, OutputDir: out, Settings: dk}
+	if err := run(t, cfg); err != nil {
 		t.Fatal(err)
 	}
-	got := output(t, out)
+	got := countries(t, out)
 	if len(got) != 27 {
 		t.Errorf("%d rows, want 27 (3 in each of parts 1-9)", len(got))
 	}
@@ -115,18 +114,51 @@ func TestFilterKeepsOnlyDK(t *testing.T) {
 			t.Fatalf("kept a %s row", c)
 		}
 	}
+	if s := summary(t, out); s.Counts["rows_in"] != 57 || s.Counts["rows_out"] != 27 {
+		t.Errorf("counts %v, want rows_in 57, rows_out 27", s.Counts)
+	}
 }
 
 // Replica 0 of 10 gets only part 10, which has no DK rows: it must finish
-// without error and without output (testcase03-replicas, GO-80).
+// without error and end its output with no chunks (testcase03-replicas,
+// GO-80).
 func TestFilterReplicaWithoutMatches(t *testing.T) {
 	out := t.TempDir()
-	cfg := sdk.LocalConfig{InputDir: parts(t), OutputDir: out, Settings: dk, Replica: 0, Replicas: 10}
-	if err := sdk.RunLocal(context.Background(), cfg, handle); err != nil {
+	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: parts(t)}, OutputDir: out, Settings: dk, Replicas: 10}
+	if err := run(t, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if got := output(t, out); len(got) != 0 {
-		t.Errorf("replica 0 emitted %v", got)
+	if got := countries(t, out); len(got) != 0 {
+		t.Errorf("replica 0 kept %v", got)
+	}
+	if s := summary(t, out); s.Counts["rows_in"] != 3 || s.Counts["rows_out"] != 0 {
+		t.Errorf("counts %v, want rows_in 3, rows_out 0", s.Counts)
+	}
+}
+
+func TestFilterLogsBadRows(t *testing.T) {
+	in, out := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(in, "part-000001.csv"), "order_id,country,amount\n1,DK,1\n2,DK\n3,DK,3\n")
+	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: in}, OutputDir: out, Settings: dk}
+	if err := run(t, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := countries(t, out); len(got) != 2 {
+		t.Errorf("kept %d rows, want 2", len(got))
+	}
+	log, err := os.ReadFile(filepath.Join(out, sdk.ErrorLogFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e sdk.LogEntry
+	if err := json.Unmarshal(log, &e); err != nil {
+		t.Fatalf("error log %q: %v", log, err)
+	}
+	if e.Code != "bad_row" || e.Fields["row"] != float64(2) || e.Chunk != "default/default/1" {
+		t.Errorf("log entry %+v", e)
+	}
+	if s := summary(t, out); s.Errors != 1 {
+		t.Errorf("errors = %d, want 1", s.Errors)
 	}
 }
 
@@ -135,11 +167,10 @@ func TestFilterBadSettings(t *testing.T) {
 		"no field":      `{"in": ["DK"]}`,
 		"no values":     `{"field": "country"}`,
 		"unknown field": `{"field": "country", "in": ["DK"], "ni": 1}`,
-		"not a string":  `{"field": "amount", "in": ["DK"]}`,
 		"no such field": `{"field": "land", "in": ["DK"]}`,
 	} {
-		cfg := sdk.LocalConfig{InputDir: parts(t), OutputDir: t.TempDir(), Settings: []byte(settings)}
-		if err := sdk.RunLocal(context.Background(), cfg, handle); !errors.Is(err, sdk.ErrUsage) {
+		cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: parts(t)}, OutputDir: t.TempDir(), Settings: []byte(settings)}
+		if err := run(t, cfg); !errors.Is(err, sdk.ErrUsage) {
 			t.Errorf("%s: %v, want ErrUsage", name, err)
 		}
 	}

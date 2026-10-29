@@ -1,6 +1,6 @@
-.PHONY: all generate check-generated test test-crd test-s3 vet
+.PHONY: all generate check-generated check-deps test test-crd test-s3 vet
 
-all: generate vet test
+all: generate vet check-deps test
 
 # Deepcopy functions and the CRD, from the kubebuilder markers in api/.
 generate:
@@ -34,3 +34,9 @@ test-s3:
 	ALPHEUS_TEST_S3_SECRET_KEY=$$GARAGE_DEFAULT_SECRET_KEY \
 	ALPHEUS_TEST_S3_CA_FILE=$(VAGRANT)/_out/ca.crt \
 	go test -race -count=1 -run TestS3 -v ./internal/store
+
+# Alpheus never reads a chunk's content, so it must not depend on Parquet or
+# Arrow (GO-101).
+check-deps:
+	@if go list -deps ./... | grep -q '^github.com/apache/arrow-go'; then \
+		echo "arrow-go is a dependency (GO-101)"; exit 1; fi

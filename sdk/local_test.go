@@ -20,167 +20,109 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
-	"github.com/apache/arrow-go/v18/arrow"
-	"github.com/apache/arrow-go/v18/arrow/array"
-	"github.com/apache/arrow-go/v18/arrow/memory"
-
-	"alpheus-dev.org/alpheus/internal/pq"
+	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/sdk"
 )
 
-var schema = arrow.NewSchema([]arrow.Field{
-	{Name: "n", Type: arrow.PrimitiveTypes.Int64},
-}, nil)
-
-// writeChunks writes input chunk files, chunk i with rows[i] rows.
-func writeChunks(t *testing.T, rows ...int) string {
+// inputs writes one file per content, named so they sort in order.
+func inputs(t *testing.T, ext string, contents ...string) string {
 	t.Helper()
 	dir := t.TempDir()
-	for i, r := range rows {
-		f, err := os.Create(filepath.Join(dir, fmt.Sprintf("part-%06d.parquet", i+1)))
-		if err != nil {
+	for i, c := range contents {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("in-%03d.%s", i+1, ext)), []byte(c), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		w, err := pq.NewWriter(f, schema, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b := ints(int64(i+1)*1000, r)
-		if err := w.Write(b); err != nil {
-			t.Fatal(err)
-		}
-		b.Release()
-		if err := w.Close(); err != nil {
-			t.Fatal(err)
-		}
-		f.Close()
 	}
 	return dir
 }
 
-func ints(start int64, rows int) arrow.RecordBatch {
-	b := array.NewRecordBuilder(memory.DefaultAllocator, schema)
-	defer b.Release()
-	for i := range rows {
-		b.Field(0).(*array.Int64Builder).Append(start + int64(i))
+// manifest reads and validates an output's manifest.
+func manifest(t *testing.T, out, output string) *chunk.Manifest {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(out, output, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	return b.NewRecordBatch()
+	m, err := chunk.ParseManifest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
-// readOutput returns the row count of each chunk file of an output.
-func readOutput(t *testing.T, dir, output string) []int64 {
+// contents returns the content of each chunk of an output, in order.
+func contents(t *testing.T, out, output string) []string {
 	t.Helper()
-	files, _ := filepath.Glob(filepath.Join(dir, output, "*.parquet"))
-	var counts []int64
-	for _, name := range files {
-		f, err := os.Open(name)
+	m := manifest(t, out, output)
+	var got []string
+	for _, c := range m.Chunks {
+		data, err := os.ReadFile(filepath.Join(out, output, fmt.Sprintf("part-%06d.%s", c.N, c.Ext)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		var n int64
-		for b, err := range pq.Read(context.Background(), f) {
-			if err != nil {
-				t.Fatal(err)
-			}
-			n += b.NumRows()
-		}
-		f.Close()
-		counts = append(counts, n)
+		got = append(got, string(data))
 	}
-	return counts
+	return got
 }
 
-func passThrough(ctx context.Context, in sdk.Input, out sdk.Output) error {
-	for b, err := range in.Batches(ctx) {
+func create(ctx context.Context, out sdk.Output, output, ext, content string) error {
+	f, err := out.Create(ctx, output, ext)
+	if err != nil {
+		return err
+	}
+	if _, err := io.WriteString(f, content); err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// copyThrough writes each input chunk unchanged to the default output.
+func copyThrough(ctx context.Context, in sdk.Input, out sdk.Output) error {
+	for c, err := range in.Chunks(ctx) {
 		if err != nil {
 			return err
 		}
-		if err := out.Emit(ctx, sdk.DefaultOutput, b); err != nil {
+		data, err := os.ReadFile(c.Path)
+		if err != nil {
+			return err
+		}
+		if err := create(ctx, out, sdk.DefaultOutput, c.Ext, string(data)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func TestLocalChunkPerInputChunk(t *testing.T) {
-	in, out := writeChunks(t, 10, 20, 30), t.TempDir()
-	if err := sdk.RunLocal(context.Background(), sdk.LocalConfig{InputDir: in, OutputDir: out}, passThrough); err != nil {
+func TestCopyThrough(t *testing.T) {
+	in, out := inputs(t, "csv", "a\n", "b\n", "c\n"), t.TempDir()
+	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: in}, OutputDir: out}
+	if err := sdk.RunLocal(context.Background(), cfg, copyThrough); err != nil {
 		t.Fatal(err)
 	}
-	if got := readOutput(t, out, "default"); fmt.Sprint(got) != "[10 20 30]" {
-		t.Errorf("output chunks %v, want [10 20 30]", got)
+	if got := contents(t, out, "default"); !slices.Equal(got, []string{"a\n", "b\n", "c\n"}) {
+		t.Errorf("chunks %q", got)
+	}
+	m := manifest(t, out, "default")
+	if !m.EOS || m.Chunks[0].Ext != "csv" || m.Chunks[2].Src.N != 3 || !m.IsConsumed("default/0", 3) {
+		t.Errorf("manifest %+v", m)
 	}
 }
 
-func TestLocalMaxRows(t *testing.T) {
-	in, out := writeChunks(t, 25), t.TempDir()
-	cfg := sdk.LocalConfig{InputDir: in, OutputDir: out, MaxRows: 10}
-	if err := sdk.RunLocal(context.Background(), cfg, passThrough); err != nil {
-		t.Fatal(err)
-	}
-	if got := readOutput(t, out, "default"); fmt.Sprint(got) != "[10 10 5]" {
-		t.Errorf("output chunks %v, want [10 10 5]", got)
-	}
-}
-
-// A replica reads only its own chunks: chunk n goes to replica n mod
-// replicas (GO-76).
-func TestLocalReplica(t *testing.T) {
-	in := writeChunks(t, 1, 2, 3, 4, 5, 6)
-	out := t.TempDir()
-	cfg := sdk.LocalConfig{InputDir: in, OutputDir: out, Replica: 1, Replicas: 3}
-	if err := sdk.RunLocal(context.Background(), cfg, passThrough); err != nil {
-		t.Fatal(err)
-	}
-	// Chunks 1 and 4 (1 and 4 rows).
-	if got := readOutput(t, out, "default"); fmt.Sprint(got) != "[1 4]" {
-		t.Errorf("output chunks %v, want [1 4]", got)
-	}
-}
-
-// State across chunks is emitted at EOS (GO-48), also by a replica that
-// got no rows.
-func TestLocalOnEOS(t *testing.T) {
-	in, out := writeChunks(t, 10, 20), t.TempDir()
-	sum := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
-		var rows int64
-		in.OnEOS(func(ctx context.Context, out sdk.Output) error {
-			b := ints(rows, 1)
-			defer b.Release()
-			return out.Emit(ctx, "result", b)
-		})
-		for b, err := range in.Batches(ctx) {
-			if err != nil {
-				return err
-			}
-			rows += b.NumRows()
-		}
-		return nil
-	}
-	if err := sdk.RunLocal(context.Background(), sdk.LocalConfig{InputDir: in, OutputDir: out}, sum); err != nil {
-		t.Fatal(err)
-	}
-	if got := readOutput(t, out, "result"); fmt.Sprint(got) != "[1]" {
-		t.Errorf("result chunks %v, want [1]", got)
-	}
-}
-
-// A source has no input and chooses its own chunks with Flush.
-func TestLocalSourceWithFlush(t *testing.T) {
+// A source's chunks are committed when closed, with the counts reported
+// since the last one (GO-91, GO-115).
+func TestSourceCommitsOnClose(t *testing.T) {
 	out := t.TempDir()
 	source := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
 		for part := range 3 {
-			b := ints(int64(part), 5)
-			err := out.Emit(ctx, sdk.DefaultOutput, b)
-			b.Release()
-			if err != nil {
-				return err
-			}
-			if err := out.Flush(ctx, sdk.DefaultOutput); err != nil {
+			sdk.Count(ctx, "rows", 10)
+			if err := create(ctx, out, sdk.DefaultOutput, "jsonl", fmt.Sprintf("part %d\n", part)); err != nil {
 				return err
 			}
 		}
@@ -189,64 +131,194 @@ func TestLocalSourceWithFlush(t *testing.T) {
 	if err := sdk.RunLocal(context.Background(), sdk.LocalConfig{OutputDir: out}, source); err != nil {
 		t.Fatal(err)
 	}
-	if got := readOutput(t, out, "default"); fmt.Sprint(got) != "[5 5 5]" {
-		t.Errorf("output chunks %v, want [5 5 5]", got)
+	m := manifest(t, out, "default")
+	if len(m.Chunks) != 3 || m.Chunks[1].Counts["rows"] != 10 || m.Chunks[0].Src != nil || !m.EOS {
+		t.Errorf("manifest %+v", m)
 	}
 }
 
-func TestLocalErrors(t *testing.T) {
-	ctx := context.Background()
-	in := writeChunks(t, 10, 10)
+// Files left open are closed when the input chunk is done (GO-86), and
+// another tool may write to the file's path.
+func TestAutoCloseAndPath(t *testing.T) {
+	in, out := inputs(t, "csv", "x"), t.TempDir()
+	h := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+		for _, err := range in.Chunks(ctx) {
+			if err != nil {
+				return err
+			}
+			f, err := out.Create(ctx, "parts", "txt")
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(f.Path(), []byte("written by name"), 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: in}, OutputDir: out}
+	if err := sdk.RunLocal(context.Background(), cfg, h); err != nil {
+		t.Fatal(err)
+	}
+	if got := contents(t, out, "parts"); !slices.Equal(got, []string{"written by name"}) {
+		t.Errorf("chunks %q", got)
+	}
+}
 
-	t.Run("returns before reading all input", func(t *testing.T) {
+// Chunks takes ports in turn; Port reads one port only (GO-109).
+func TestPorts(t *testing.T) {
+	ctx := context.Background()
+	big := inputs(t, "csv", "b1", "b2", "b3")
+	lookup := inputs(t, "csv", "l1", "l2")
+
+	var order []string
+	roundRobin := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+		for c, err := range in.Chunks(ctx) {
+			if err != nil {
+				return err
+			}
+			data, _ := os.ReadFile(c.Path)
+			order = append(order, string(data))
+		}
+		return nil
+	}
+	cfg := sdk.LocalConfig{Inputs: map[string]string{"big": big, "lookup": lookup}, OutputDir: t.TempDir()}
+	if err := sdk.RunLocal(ctx, cfg, roundRobin); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"b1", "l1", "b2", "l2", "b3"}; !slices.Equal(order, want) {
+		t.Errorf("order %v, want %v", order, want)
+	}
+
+	order = nil
+	lookupFirst := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+		for c, err := range in.Port("lookup").Chunks(ctx) {
+			if err != nil {
+				return err
+			}
+			order = append(order, c.Port)
+		}
+		for c, err := range in.Chunks(ctx) {
+			if err != nil {
+				return err
+			}
+			order = append(order, c.Port)
+		}
+		return nil
+	}
+	if err := sdk.RunLocal(ctx, cfg, lookupFirst); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"lookup", "lookup", "big", "big", "big"}; !slices.Equal(order, want) {
+		t.Errorf("order %v, want %v", order, want)
+	}
+}
+
+// A replica reads only its own chunks: chunk n goes to replica n mod
+// replicas (GO-76).
+func TestReplica(t *testing.T) {
+	in, out := inputs(t, "csv", "1", "2", "3", "4", "5", "6"), t.TempDir()
+	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: in}, OutputDir: out, Replica: 1, Replicas: 3}
+	if err := sdk.RunLocal(context.Background(), cfg, copyThrough); err != nil {
+		t.Fatal(err)
+	}
+	if got := contents(t, out, "default"); !slices.Equal(got, []string{"1", "4"}) {
+		t.Errorf("chunks %q, want [1 4]", got)
+	}
+}
+
+// State across chunks is written at EOS (GO-48).
+func TestOnEOS(t *testing.T) {
+	in, out := inputs(t, "csv", "aa", "bbb"), t.TempDir()
+	sum := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+		var total int64
+		in.OnEOS(func(ctx context.Context, out sdk.Output) error {
+			return create(ctx, out, "result", "txt", fmt.Sprint(total))
+		})
+		for c, err := range in.Chunks(ctx) {
+			if err != nil {
+				return err
+			}
+			total += c.Bytes
+		}
+		return nil
+	}
+	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: in}, OutputDir: out}
+	if err := sdk.RunLocal(context.Background(), cfg, sum); err != nil {
+		t.Fatal(err)
+	}
+	if got := contents(t, out, "result"); !slices.Equal(got, []string{"5"}) {
+		t.Errorf("result %q, want [5]", got)
+	}
+}
+
+func TestErrors(t *testing.T) {
+	ctx := context.Background()
+	in := inputs(t, "csv", "a", "b")
+	inputs := map[string]string{sdk.DefaultPort: in}
+
+	t.Run("returns in the middle", func(t *testing.T) {
 		early := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
-			for range in.Batches(ctx) {
+			for range in.Chunks(ctx) {
 				break
 			}
 			return nil
 		}
-		if err := sdk.RunLocal(ctx, sdk.LocalConfig{InputDir: in, OutputDir: t.TempDir()}, early); err == nil {
+		if err := sdk.RunLocal(ctx, sdk.LocalConfig{Inputs: inputs, OutputDir: t.TempDir()}, early); err == nil {
 			t.Error("accepted")
 		}
 	})
 
-	t.Run("two schemas on one output", func(t *testing.T) {
-		other := arrow.NewSchema([]arrow.Field{{Name: "x", Type: arrow.BinaryTypes.String}}, nil)
-		mixed := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
-			b := ints(0, 1)
-			defer b.Release()
-			if err := out.Emit(ctx, sdk.DefaultOutput, b); err != nil {
-				return err
-			}
-			rb := array.NewRecordBuilder(memory.DefaultAllocator, other)
-			defer rb.Release()
-			rb.Field(0).(*array.StringBuilder).Append("x")
-			r := rb.NewRecordBatch()
-			defer r.Release()
-			return out.Emit(ctx, sdk.DefaultOutput, r)
+	t.Run("bad extension", func(t *testing.T) {
+		h := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+			_, err := out.Create(ctx, sdk.DefaultOutput, "tar.gz")
+			return err
 		}
-		err := sdk.RunLocal(ctx, sdk.LocalConfig{OutputDir: t.TempDir()}, mixed)
-		if !errors.Is(err, pq.ErrSchema) {
-			t.Errorf("%v, want ErrSchema", err)
-		}
-	})
-
-	t.Run("unknown setting", func(t *testing.T) {
-		withSettings := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
-			var s struct {
-				Field string `json:"field"`
-			}
-			return in.Settings(&s)
-		}
-		cfg := sdk.LocalConfig{OutputDir: t.TempDir(), Settings: []byte(`{"feild": "country"}`)}
-		if err := sdk.RunLocal(ctx, cfg, withSettings); !errors.Is(err, sdk.ErrUsage) {
+		if err := sdk.RunLocal(ctx, sdk.LocalConfig{OutputDir: t.TempDir()}, h); !errors.Is(err, sdk.ErrUsage) {
 			t.Errorf("%v, want ErrUsage", err)
 		}
 	})
 
-	t.Run("replica out of range", func(t *testing.T) {
-		cfg := sdk.LocalConfig{OutputDir: t.TempDir(), Replica: 3, Replicas: 3}
-		if err := sdk.RunLocal(ctx, cfg, passThrough); !errors.Is(err, sdk.ErrUsage) {
+	t.Run("chunk over maxBytes", func(t *testing.T) {
+		h := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+			return create(ctx, out, sdk.DefaultOutput, "txt", strings.Repeat("x", 11))
+		}
+		err := sdk.RunLocal(ctx, sdk.LocalConfig{OutputDir: t.TempDir(), MaxBytes: 10}, h)
+		if err == nil || !strings.Contains(err.Error(), "maxBytes 10") {
+			t.Errorf("%v, want a maxBytes error", err)
+		}
+	})
+
+	t.Run("bad counter unit", func(t *testing.T) {
+		h := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+			sdk.Count(ctx, "Rows", 1)
+			return nil
+		}
+		if err := sdk.RunLocal(ctx, sdk.LocalConfig{OutputDir: t.TempDir()}, h); !errors.Is(err, sdk.ErrUsage) {
+			t.Errorf("%v, want ErrUsage", err)
+		}
+	})
+
+	t.Run("more than 16 counter units", func(t *testing.T) {
+		h := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+			for i := range 17 {
+				sdk.Count(ctx, fmt.Sprintf("unit_%d", i), 1)
+			}
+			return nil
+		}
+		if err := sdk.RunLocal(ctx, sdk.LocalConfig{OutputDir: t.TempDir()}, h); !errors.Is(err, sdk.ErrUsage) {
+			t.Errorf("%v, want ErrUsage", err)
+		}
+	})
+
+	t.Run("unknown port", func(t *testing.T) {
+		h := func(ctx context.Context, in sdk.Input, out sdk.Output) error {
+			for _, err := range in.Port("nope").Chunks(ctx) {
+				return err
+			}
+			return nil
+		}
+		if err := sdk.RunLocal(ctx, sdk.LocalConfig{Inputs: inputs, OutputDir: t.TempDir()}, h); !errors.Is(err, sdk.ErrUsage) {
 			t.Errorf("%v, want ErrUsage", err)
 		}
 	})

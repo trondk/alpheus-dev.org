@@ -490,7 +490,7 @@ func main() {
 | GO-48 | SKAL | Komponenter med tilstand på tværs af chunks får et `in.OnEOS`-hook til at skrive deres resultat til sidst. |
 | GO-49 | BØR | Samme komponent-binær kan køre i MCPipes batch-mode på Argo ved at SDK'et genkender miljøet og læser én stor chunk. |
 | GO-86 | SKAL | En output-chunk lukkes, når komponenten kalder `Close` på den, eller automatisk, når den input-chunk, den blev lavet af, er færdig (`Done`). `Flush` og `maxRows` fjernes fra komponent-API'et og fra StreamRun. |
-| GO-87 | SKAL | Lokal testmode vælges med `ALPHEUS_MODE=local` og mapperne `ALPHEUS_LOCAL_INPUT` (alle filer, læst i navneorden) og `ALPHEUS_LOCAL_OUTPUT` (én mappe pr. udgang, med manifest-formatet fra 7.3). `ALPHEUS_SETTINGS` er trinnets settings som JSON, og `ALPHEUS_REPLICA` og `ALPHEUS_REPLICAS` vælger, hvilke chunks replikaen læser (GO-76). Komponenttests kalder `sdk.RunLocal` direkte. |
+| GO-87 | SKAL | Lokal testmode vælges med `ALPHEUS_MODE=local` og mapperne `ALPHEUS_LOCAL_INPUT` (alle filer, læst i navneorden) og `ALPHEUS_LOCAL_OUTPUT` (én mappe pr. udgang, med manifest-formatet fra 7.3, og filerne `_summary.json` med tællere og antal fejl og `_errors.jsonl` med fejlloggen). `ALPHEUS_SETTINGS` er trinnets settings som JSON, og `ALPHEUS_REPLICA` og `ALPHEUS_REPLICAS` vælger, hvilke chunks replikaen læser (GO-76). Komponenttests kalder `sdk.RunLocal` direkte. |
 
 
 ### 10.1 Tællere, fejl og fremdrift
@@ -665,10 +665,9 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    API-serveren i testklyngen (`make test-crd`).
 2. `internal/chunk` og `internal/store` med unit-tests og Garage.
    *Færdig*: unit- og fuzz-tests, lagertests mod Garage (`make test-s3`).
-3. `sdk` med lokal testmode og en filter-komponent. *Bygget med Arrow
-   og Parquet; skal omskrives til fil-API'et (GO-101 til GO-112) og
-   tællere og fejllog (10.1)*, før agenten bygges. Agent-mode kommer med
-   agenten i trin 4.
+3. `sdk` med lokal testmode og en filter-komponent. *Færdig*: fil-API'et
+   (GO-101 til GO-112), tællere og fejllog (10.1), og filter i CSV.
+   Agent-mode kommer med agenten i trin 4.
 4. Agenten med `builtin`-signaler, kørt lokalt mod Garage.
 5. Controlleren med envtest.
 6. E2E på Talos i Vagrant-VM'en med testcase01.

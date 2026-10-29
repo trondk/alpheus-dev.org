@@ -14,22 +14,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command filter is a test component: it keeps the rows whose string
-// column field has one of the values in, and emits them to the default
-// output. A chunk without matching rows gives no output.
+// Command filter is a test component. Its input chunks are CSV files with a
+// header row; it keeps the rows whose column field has one of the values
+// in, and writes them with the header as one CSV chunk per input chunk to
+// the default output. A chunk without matching rows gives no output.
 //
 // Settings: {"field": "country", "in": ["DK"]}
+//
+// It counts the units rows_in and rows_out, and logs a row with the wrong
+// number of columns as the error bad_row and skips it.
 package main
 
 import (
 	"context"
+	"encoding/csv"
+	"errors"
 	"fmt"
+	"io"
 	"slices"
-
-	"github.com/apache/arrow-go/v18/arrow"
-	"github.com/apache/arrow-go/v18/arrow/array"
-	"github.com/apache/arrow-go/v18/arrow/compute"
-	"github.com/apache/arrow-go/v18/arrow/memory"
 
 	"alpheus-dev.org/alpheus/sdk"
 )
@@ -51,48 +53,77 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
 	if s.Field == "" || len(s.In) == 0 {
 		return fmt.Errorf("%w: settings need field and in", sdk.ErrUsage)
 	}
-	for batch, err := range in.Batches(ctx) {
+	for c, err := range in.Chunks(ctx) {
 		if err != nil {
 			return err
 		}
-		kept, err := filter(ctx, batch, s.Field, s.In)
-		if err != nil {
-			return err
-		}
-		if kept.NumRows() > 0 {
-			err = out.Emit(ctx, sdk.DefaultOutput, kept)
-		}
-		kept.Release()
-		if err != nil {
-			return err
+		if err := filterChunk(ctx, c, out, s); err != nil {
+			return fmt.Errorf("chunk %d from %s: %w", c.N, c.Step, err)
 		}
 	}
 	return nil
 }
 
-// filter returns the rows of batch whose column field is one of values.
-func filter(ctx context.Context, batch arrow.RecordBatch, field string, values []string) (arrow.RecordBatch, error) {
-	idx := batch.Schema().FieldIndices(field)
-	if len(idx) != 1 {
-		return nil, fmt.Errorf("%w: input has no single column %q", sdk.ErrUsage, field)
-	}
-	col, ok := batch.Column(idx[0]).(*array.String)
-	if !ok {
-		return nil, fmt.Errorf("%w: column %q is %s, want string", sdk.ErrUsage, field, batch.Column(idx[0]).DataType())
-	}
-
-	mask := array.NewBooleanBuilder(memory.DefaultAllocator)
-	defer mask.Release()
-	mask.Reserve(col.Len())
-	for i := range col.Len() {
-		mask.UnsafeAppend(col.IsValid(i) && slices.Contains(values, col.Value(i)))
-	}
-	m := mask.NewArray()
-	defer m.Release()
-
-	kept, err := compute.FilterRecordBatch(ctx, batch, m, compute.DefaultFilterOptions())
+func filterChunk(ctx context.Context, c sdk.Chunk, out sdk.Output, s settings) error {
+	src, err := c.Open()
 	if err != nil {
-		return nil, fmt.Errorf("filter: %w", err)
+		return err
 	}
-	return kept, nil
+	defer src.Close()
+	r := csv.NewReader(src)
+	r.FieldsPerRecord = -1 // checked below, so a bad row is logged, not fatal
+
+	header, err := r.Read()
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	col := slices.Index(header, s.Field)
+	if col < 0 {
+		return fmt.Errorf("%w: input has no column %q", sdk.ErrUsage, s.Field)
+	}
+
+	var dst *sdk.File
+	var w *csv.Writer
+	var in, kept int64
+	for row := int64(1); ; row++ {
+		rec, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		in++
+		if len(rec) != len(header) {
+			sdk.Error(ctx, "bad_row", "wrong number of columns", sdk.Field("row", row), sdk.Field("columns", len(rec)))
+			continue
+		}
+		if !slices.Contains(s.In, rec[col]) {
+			continue
+		}
+		if dst == nil {
+			// Created on the first match, so a chunk without matches gives
+			// no output chunk.
+			if dst, err = out.Create(ctx, sdk.DefaultOutput, "csv"); err != nil {
+				return err
+			}
+			w = csv.NewWriter(dst)
+			w.Write(header)
+		}
+		w.Write(rec)
+		kept++
+	}
+	sdk.Count(ctx, "rows_in", in)
+	sdk.Count(ctx, "rows_out", kept)
+	if dst == nil {
+		return nil
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return err
+	}
+	return dst.Close()
 }

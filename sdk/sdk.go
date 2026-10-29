@@ -14,19 +14,26 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package sdk is how an Alpheus component is written in Go. A component is
-// a function from Arrow record batches to Arrow record batches; the SDK
-// handles everything else: the connection to the agent, which chunk a batch
-// belongs to, acknowledging chunks, shutdown signals and exit codes
-// (GO-46).
+// Package sdk is how an Alpheus component is written in Go. A component
+// reads its input chunks as files and writes its output chunks as files, in
+// any format it likes; Alpheus moves the files but never reads them
+// (GO-101). The SDK handles everything else: the connection to the agent,
+// which chunk is done, shutdown signals and exit codes (GO-46).
 //
 //	func main() {
 //		sdk.Run(func(ctx context.Context, in sdk.Input, out sdk.Output) error {
-//			for batch, err := range in.Batches(ctx) {
+//			for chunk, err := range in.Chunks(ctx) {
 //				if err != nil {
 //					return err
 //				}
-//				if err := out.Emit(ctx, sdk.DefaultOutput, filter(batch)); err != nil {
+//				dst, err := out.Create(ctx, sdk.DefaultOutput, "csv")
+//				if err != nil {
+//					return err
+//				}
+//				if err := filter(chunk.Path, dst); err != nil {
+//					return err
+//				}
+//				if err := dst.Close(); err != nil {
 //					return err
 //				}
 //			}
@@ -34,9 +41,12 @@ limitations under the License.
 //		})
 //	}
 //
+// Components report how much they have processed and what went wrong with
+// [Count], [Error], [Warn] and [Progress] (spec 10.1).
+//
 // The same component runs without Kubernetes in local mode, which reads
-// Parquet files from a folder and writes its outputs to another (GO-47);
-// see [RunLocal] and [Run].
+// input files from a folder and writes its outputs to another (GO-47); see
+// [RunLocal] and [Run].
 package sdk
 
 import (
@@ -52,30 +62,55 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
-
-	"github.com/apache/arrow-go/v18/arrow"
 )
 
-// DefaultOutput is the output an edge reads when it names none.
-const DefaultOutput = "default"
+// DefaultOutput is the output an edge reads when it names none, and
+// DefaultPort the input an edge ends in when it names none (GO-108).
+const (
+	DefaultOutput = "default"
+	DefaultPort   = "default"
+)
 
-// Handler is a component: it reads batches from in and emits batches to
-// out. Returning nil means the component has finished successfully; it must
-// then have read all of its input.
+// Handler is a component: it reads input chunks from in and creates output
+// chunks with out. Returning nil means the component has finished
+// successfully; it must then have read all of its input.
 type Handler func(ctx context.Context, in Input, out Output) error
 
-// Input is the component's input: the batches of every chunk assigned to
-// this replica, from every incoming edge, and the step's settings.
+// Chunk is an input chunk: a file in the component's scratch folder.
+type Chunk struct {
+	// Port is the input the chunk arrived on (GO-108).
+	Port string
+	// Step and Replica are the producer, and N the chunk's number in the
+	// producer's stream.
+	Step    string
+	Replica int
+	N       int64
+	// Path is the local file. The agent deletes it when the chunk is done.
+	Path string
+	// Ext is the file extension the producer gave, without the dot.
+	Ext   string
+	Bytes int64
+}
+
+// Open opens the chunk's file for reading.
+func (c Chunk) Open() (*os.File, error) { return os.Open(c.Path) }
+
+// Input is the component's input: the chunks assigned to this replica from
+// every incoming edge, and the step's settings.
 type Input interface {
-	// Batches yields the input batches in order. A batch is valid until
-	// the next iteration; call Retain to keep it longer. A chunk is
-	// acknowledged when the component asks for the batch after its last
-	// one, so everything emitted while handling a chunk is committed with
-	// it. Batches can be iterated once.
-	Batches(ctx context.Context) iter.Seq2[arrow.RecordBatch, error]
+	// Chunks yields input chunks from every port. A chunk is done when
+	// the component asks for the next one or the loop ends normally;
+	// output files created for it and not closed are closed then (GO-86).
+	// Output, counts and log entries made while a chunk was handled are
+	// committed with it (GO-90, GO-115, GO-118).
+	Chunks(ctx context.Context) iter.Seq2[Chunk, error]
+
+	// Port returns the chunks of one input only (GO-109). A component may
+	// read a small port to the end first and then stream another.
+	Port(name string) Port
 
 	// OnEOS registers a function that runs once all input has been read,
-	// before the outputs end. Components with state across chunks emit
+	// before the outputs end. Components with state across chunks write
 	// their result here (GO-48).
 	OnEOS(fn func(ctx context.Context, out Output) error)
 
@@ -89,22 +124,24 @@ type Input interface {
 	Replicas() int
 }
 
-// Output is where the component's batches go.
-type Output interface {
-	// Emit sends a batch to a named output. All batches on one output must
-	// have the same schema (GO-28). Emit may block while consumers catch up
-	// (backpressure, GO-35); the batch can be released when Emit returns.
-	Emit(ctx context.Context, output string, batch arrow.RecordBatch) error
-
-	// Flush ends the current chunk on an output, so the next batch starts
-	// a new one. Chunks also end at maxRows and when an input chunk is
-	// done; Flush is for components that choose their own boundaries, such
-	// as a source that writes its data in parts.
-	Flush(ctx context.Context, output string) error
+// Port is one named input.
+type Port interface {
+	Chunks(ctx context.Context) iter.Seq2[Chunk, error]
 }
 
-// ErrUsage means the component was started wrongly: no agent and no local
-// mode, or a bad setting. Run exits with code 2 for it.
+// Output is where the component's chunks go.
+type Output interface {
+	// Create starts a new output chunk on a named output, as a file with
+	// the given extension (lower-case letters and digits, at most 16;
+	// GO-104). Write to the File, or let another tool write to its Path,
+	// and Close it. Create may block while consumers catch up
+	// (backpressure, GO-35).
+	Create(ctx context.Context, output, ext string) (*File, error)
+}
+
+// ErrUsage means the component was started or used wrongly: no agent and no
+// local mode, a bad setting or a bad counter unit. Run exits with code 2 for
+// it.
 var ErrUsage = errors.New("usage")
 
 // Exit codes of Run.
@@ -120,7 +157,8 @@ const (
 	// EnvMode selects how the component runs: "local", or empty when it is
 	// started by the agent.
 	EnvMode = "ALPHEUS_MODE"
-	// EnvLocalInput and EnvLocalOutput are the folders of local mode.
+	// EnvLocalInput is the folder of the default port in local mode, and
+	// EnvLocalOutput the folder the outputs go to.
 	EnvLocalInput  = "ALPHEUS_LOCAL_INPUT"
 	EnvLocalOutput = "ALPHEUS_LOCAL_OUTPUT"
 	// EnvSettings holds the step's settings as JSON.
@@ -141,7 +179,7 @@ const (
 func Run(h Handler) {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("component", component())
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	err := run(ctx, h)
+	err := run(ctx, log, h)
 	stop()
 	code := exitCode(ctx, err)
 	if err != nil {
@@ -150,13 +188,14 @@ func Run(h Handler) {
 	os.Exit(code)
 }
 
-func run(ctx context.Context, h Handler) error {
+func run(ctx context.Context, log *slog.Logger, h Handler) error {
 	switch mode := os.Getenv(EnvMode); mode {
 	case "local":
 		cfg, err := localConfigFromEnv()
 		if err != nil {
 			return err
 		}
+		cfg.Log = log
 		return RunLocal(ctx, cfg, h)
 	case "":
 		if os.Getenv(EnvSocket) == "" {
@@ -183,9 +222,11 @@ func exitCode(ctx context.Context, err error) int {
 
 func localConfigFromEnv() (LocalConfig, error) {
 	cfg := LocalConfig{
-		InputDir:  os.Getenv(EnvLocalInput),
 		OutputDir: os.Getenv(EnvLocalOutput),
 		Settings:  []byte(os.Getenv(EnvSettings)),
+	}
+	if dir := os.Getenv(EnvLocalInput); dir != "" {
+		cfg.Inputs = map[string]string{DefaultPort: dir}
 	}
 	var err error
 	if cfg.Replica, err = intEnv(EnvReplica, 0); err != nil {
