@@ -15,6 +15,7 @@ TALOS_ISO="${TALOS_ISO:-$HERE/.cache/talos-$TALOS_VERSION-metal-amd64.iso}"
 CLUSTER_NAME="alpheus"
 OUT="$HERE/_out"
 LIBVIRT_URI="qemu:///system"
+REGISTRY_HOST="registry.alpheus.test:30500"
 
 export TALOSCONFIG="$OUT/talosconfig"
 
@@ -64,8 +65,41 @@ try_bootstrap() {
   [[ $out == *AlreadyExists* ]]
 }
 
+# The test CA signs the gateway's certificate (services.sh). Talos must trust
+# it before it is installed, so it is made here, before the Talos config.
+make_ca() {
+  [[ -f $OUT/ca.crt && -f $OUT/ca.key ]] && return
+  log "creating the test CA"
+  ( umask 077
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+      -keyout "$OUT/ca.key" -out "$OUT/ca.crt" -days 3650 \
+      -subj "/O=Alpheus test/CN=Alpheus test CA" \
+      -addext "basicConstraints=critical,CA:TRUE" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null )
+  chmod 0644 "$OUT/ca.crt"
+}
+
+# The node pulls images named registry.alpheus.test:30500/... from Zot
+# through the gateway: the name points at the VM itself, and the gateway's
+# certificate is trusted through the test CA.
+registry_patch() {  # ip
+  cat > "$OUT/registry-patch.yaml" <<EOF
+apiVersion: v1alpha1
+kind: StaticHostConfig
+name: $1
+hostnames:
+  - ${REGISTRY_HOST%:*}
+---
+apiVersion: v1alpha1
+kind: RegistryTLSConfig
+name: $REGISTRY_HOST
+ca: |
+$(sed 's/^/  /' "$OUT/ca.crt")
+EOF
+}
+
 bootstrap() {
-  need talosctl kubectl virsh
+  need talosctl kubectl virsh openssl
 
   log "waiting for the VM to get an IP address"
   wait_for 300 "a DHCP lease for $VM_NAME" has_ip
@@ -77,11 +111,14 @@ bootstrap() {
     log "Talos is already configured"
   else
     mkdir -p "$OUT"
+    make_ca
+    registry_patch "$ip"
     log "generating Talos config"
     talosctl gen config "$CLUSTER_NAME" "https://$ip:6443" \
       --talos-version "$TALOS_VERSION" \
       --install-disk /dev/vda \
       --config-patch-control-plane @"$HERE/patch.yaml" \
+      --config-patch-control-plane @"$OUT/registry-patch.yaml" \
       --additional-sans "$ip" \
       --output "$OUT" --force
 

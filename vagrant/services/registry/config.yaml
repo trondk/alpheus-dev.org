@@ -1,0 +1,48 @@
+# Zot settings, https://zotregistry.dev
+# Plain HTTP inside the cluster; HTTPS from the host and for the node's image
+# pulls goes through the gateway. No login: the VM is only reachable from
+# this machine (README.md, Security).
+# Images are stored in Garage, bucket alpheus-registry. The S3 keys come from
+# the zot-s3 Secret as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+# rootDirectory holds only Zot's databases; Zot rebuilds them from the bucket.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zot-config
+  namespace: registry
+data:
+  config.json: |
+    {
+      "distSpecVersion": "1.1.1",
+      "storage": {
+        "rootDirectory": "/var/lib/zot",
+        "dedupe": true,
+        "remoteCache": false,
+        "gc": true,
+        "storageDriver": {
+          "name": "s3",
+          "rootdirectory": "/zot",
+          "region": "garage",
+          "regionendpoint": "http://garage.storage.svc.cluster.local:3900",
+          "bucket": "alpheus-registry",
+          "forcepathstyle": true,
+          "secure": false,
+          "skipverify": false
+        }
+      },
+      "http": {
+        "address": "0.0.0.0",
+        "port": "5000"
+      },
+      "log": {
+        "level": "info"
+      },
+      "extensions": {
+        "search": {
+          "enable": true
+        },
+        "ui": {
+          "enable": true
+        }
+      }
+    }

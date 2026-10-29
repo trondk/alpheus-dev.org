@@ -1,0 +1,12 @@
+# Zot's databases (dedupe cache, search index). The images are in Garage.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zot-db
+  namespace: registry
+spec:
+  storageClassName: local-path
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi

@@ -1,0 +1,14 @@
+# HAProxy 3.2, https://www.haproxy.org, as in MCPipe: ends HTTPS for the
+# external ports. The gateway-tls Secret is created by services.sh.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+# The name gets a hash of haproxy.cfg, so a change restarts HAProxy.
+configMapGenerator:
+  - name: haproxy-config
+    namespace: gateway
+    files:
+      - haproxy.cfg

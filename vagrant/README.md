@@ -30,8 +30,34 @@ health and refreshes the kubeconfig.
 The VM gets its IP by DHCP on the Vagrant management network.
 `./talos.sh ip` prints it.
 
+## Services
+
+After Kubernetes, `services.sh` installs the same services and versions
+MCPipe uses (manifests in `services/`):
+
+| Service | From this machine | Inside the cluster |
+|---|---|---|
+| Garage S3 v2.4.1 | `https://<VM IP>:30900`, bucket `alpheus-data` | `http://garage.storage.svc.cluster.local:3900` |
+| garage-ui v0.13.0 | `https://<VM IP>:30901` | |
+| Zot v2.1.22 | `https://registry.alpheus.test:30500` | `http://zot.registry.svc.cluster.local:5000` |
+
+HTTPS goes through HAProxy with a certificate from a test CA that
+`talos.sh` makes in `_out/ca.crt`. Talos trusts the CA and resolves
+`registry.alpheus.test` to the VM itself, so flow files name images
+`registry.alpheus.test:30500/...` whatever the VM's IP is.
+`credentials.sh` prints the keys, the `/etc/hosts` line and the podman
+setup. Every `deploy.sh` on a new VM makes new keys and a new CA.
+
 `vagrant ssh` and `vagrant provision` do not work, because Talos has no
 SSH. Use `talosctl` instead, for example `talosctl dashboard`.
+
+## Security
+
+The test cluster is for this machine only. The registry (Zot) has no
+login, and the credentials are printed in plain text. That is acceptable
+only because the VM sits on libvirt's host-only/NAT management network
+and cannot be reached from other machines. Do not attach the VM to a
+bridged or public network, and do not forward its ports.
 
 ## Settings
 

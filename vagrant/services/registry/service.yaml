@@ -1,0 +1,15 @@
+# Inside the cluster only (HTTP): zot.registry.svc.cluster.local:5000.
+# From the host and for the node's image pulls:
+# https://registry.alpheus.test:30500, through the gateway.
+apiVersion: v1
+kind: Service
+metadata:
+  name: zot
+  namespace: registry
+spec:
+  selector:
+    app: zot
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http

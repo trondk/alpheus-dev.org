@@ -1,0 +1,27 @@
+# Garage v2.4.1 settings,
+# https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/
+# Secrets (rpc_secret, admin_token) come from the garage-secrets Secret as
+# environment variables, never from here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: garage-config
+  namespace: storage
+data:
+  garage.toml: |
+    # One node, no replication (--single-node).
+    replication_factor = 1
+
+    metadata_dir = "/meta"
+    db_engine = "lmdb"
+    data_dir = "/data"
+
+    rpc_bind_addr = "0.0.0.0:3901"
+    rpc_public_addr = "127.0.0.1:3901"
+
+    [s3_api]
+    s3_region = "garage"
+    api_bind_addr = "0.0.0.0:3900"
+
+    [admin]
+    api_bind_addr = "0.0.0.0:3903"

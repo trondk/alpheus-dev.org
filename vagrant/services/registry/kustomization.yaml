@@ -1,0 +1,11 @@
+# Zot v2.1.22, https://zotregistry.dev, the container registry for test
+# components. Same version as MCPipe; images are stored in Garage.
+# The zot-s3 Secret is created by services.sh.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - config.yaml
+  - volume.yaml
+  - deployment.yaml
+  - service.yaml

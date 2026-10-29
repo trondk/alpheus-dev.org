@@ -54,6 +54,11 @@ Vagrant.configure("2") do |config|
   end
 
   config.trigger.after :up do |t|
+    t.info = "Installing Garage, Zot and the HTTPS gateway"
+    t.run = { path: File.join(HERE, "services.sh") }
+  end
+
+  config.trigger.after :up do |t|
     t.info = "Credentials and how to connect"
     t.run = { path: File.join(HERE, "credentials.sh") }
   end

@@ -1,0 +1,13 @@
+# Garage v2.4.1, https://garagehq.deuxfleurs.fr, the S3 store for chunks.
+# Dashboard: garage-ui v0.13.0, https://github.com/Noooste/garage-ui
+# Same versions and settings as MCPipe, but on one node with everything on
+# the VM's disk. The garage-secrets Secret is created by services.sh.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - config.yaml
+  - volumes.yaml
+  - deployment.yaml
+  - service.yaml
+  - dashboard.yaml

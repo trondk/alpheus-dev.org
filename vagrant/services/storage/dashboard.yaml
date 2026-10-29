@@ -1,0 +1,91 @@
+# Web dashboard for Garage: Noooste/garage-ui v0.13.0 (MIT, not part of
+# Garage), https://github.com/Noooste/garage-ui
+# https://<VM IP>:30901 (through the gateway), log in with the Garage admin
+# token (credentials.sh). Whoever logs in has full control of Garage.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: garage-ui
+  namespace: storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: garage-ui
+  template:
+    metadata:
+      labels:
+        app: garage-ui
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: garage-ui
+          image: docker.io/noooste/garage-ui:v0.13.0
+          env:
+            - name: GARAGE_UI_SERVER_HOST
+              value: "0.0.0.0"
+            - name: GARAGE_UI_SERVER_ENVIRONMENT
+              value: production
+            - name: GARAGE_UI_GARAGE_ENDPOINT
+              value: http://garage.storage.svc.cluster.local:3900
+            - name: GARAGE_UI_GARAGE_ADMIN_ENDPOINT
+              value: http://garage-admin.storage.svc.cluster.local:3903
+            - name: GARAGE_UI_GARAGE_REGION
+              value: garage
+            - name: GARAGE_UI_GARAGE_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: garage-secrets
+                  key: GARAGE_ADMIN_TOKEN
+            # Log in with the Garage admin token.
+            - name: GARAGE_UI_AUTH_TOKEN_ENABLED
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-ui
+  namespace: storage
+spec:
+  selector:
+    app: garage-ui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

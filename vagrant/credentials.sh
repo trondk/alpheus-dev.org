@@ -43,8 +43,18 @@ file_status() {  # file
   fi
 }
 
+from_env() {  # file key
+  [[ -f "$1" ]] && sed -n -E "s/^$2=//p" "$1"
+}
+from_secret() {  # namespace secret key
+  kubectl -n "$1" get secret "$2" -o jsonpath="{.data.$3}" 2>/dev/null | base64 -d 2>/dev/null
+}
+
 CLUSTER=1
 kubectl version --request-timeout=5s >/dev/null 2>&1 || CLUSTER=0
+
+GARAGE="$OUT/secrets.env"
+REGISTRY="registry.alpheus.test:30500"
 
 # The cluster admin's bearer token is not stored; the kubeconfig uses a client
 # certificate. Show a fingerprint of it so two kubeconfigs can be compared.
@@ -77,6 +87,34 @@ Kubernetes and Talos: kubectl and talosctl (admin, client certificates inside)
   Dashboard:    talosctl -n $CP_IP dashboard
   After vagrant destroy the files are gone; vagrant up makes new ones in the
   same place.
+
+Test CA (every web service below is HTTPS through the gateway, with its certificates)
+  certificate:  $(file_status "$OUT/ca.crt")   (import it in your browser)
+  private key:  $OUT/ca.key   (never share it)
+  Registry name: images are named $REGISTRY/..., so flow files do not
+  depend on the VM's IP. The node resolves it itself; on this machine add
+    $CP_IP ${REGISTRY%:*}
+  to /etc/hosts (it changes when the VM gets a new IP), and for podman:
+    sudo mkdir -p /etc/containers/certs.d/$REGISTRY
+    sudo cp $OUT/ca.crt /etc/containers/certs.d/$REGISTRY/ca.crt
+
+Garage (storage)                               from _out/secrets.env
+  dashboard:    https://$CP_IP:30901   log in with the admin token
+  admin token:  $(show "$(from_env "$GARAGE" GARAGE_ADMIN_TOKEN)")
+  S3:           https://$CP_IP:30900   region garage, bucket alpheus-data
+                inside the cluster: http://garage.storage.svc.cluster.local:3900
+  access key:   $(show "$(from_env "$GARAGE" GARAGE_DEFAULT_ACCESS_KEY)")
+  secret key:   $(show "$(from_env "$GARAGE" GARAGE_DEFAULT_SECRET_KEY)")
+                the same key is the Secret alpheus-s3 in namespace default
+                (spec.storage.secretRef for test runs)
+  rpc secret:   $(show "$(from_env "$GARAGE" GARAGE_RPC_SECRET)")   (Garage-internal)
+
+Zot (registry)                                 Garage key from the cluster
+  web UI:       https://$REGISTRY   no login (this machine only, README.md)
+  push:         podman push <image> $REGISTRY/<name>:<tag>
+  its own S3 key for bucket alpheus-registry (Zot-internal):
+    access key: $(show "$(from_secret registry zot-s3 AWS_ACCESS_KEY_ID)")
+    secret key: $(show "$(from_secret registry zot-s3 AWS_SECRET_ACCESS_KEY)")
 EOF
 
 [[ "$CLUSTER" == 1 ]] || exit 1

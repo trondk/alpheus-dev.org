@@ -1,0 +1,29 @@
+# S3 API. Inside the cluster: http://garage.storage.svc.cluster.local:3900
+# (Garage has no TLS). From the host: https://<VM IP>:30900, through the
+# gateway.
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage
+  namespace: storage
+spec:
+  selector:
+    app: garage
+  ports:
+    - name: s3
+      port: 3900
+      targetPort: s3
+---
+# Admin API, inside the cluster only (used by the dashboard).
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-admin
+  namespace: storage
+spec:
+  selector:
+    app: garage
+  ports:
+    - name: admin
+      port: 3903
+      targetPort: admin
