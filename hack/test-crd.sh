@@ -66,21 +66,46 @@ create "should be greater than or equal to 1" "replicas 0" \
   < <(sample 's/- name: sum/- name: sum\n      replicas: 0/')
 create "should be less than or equal to 64" "replicas 65" \
   < <(sample 's/- name: sum/- name: sum\n      replicas: 65/')
+create "unknown field" "maxRows is gone (GO-86)" \
+  < <(sample 's/maxBytes: 512Mi/maxRows: 50000/')
+create "Unsupported value" "unknown failurePolicy" \
+  < <(sample 's/- name: sum/- name: sum\n      failurePolicy: retry/')
+create "Unsupported value" "unknown inputOrder" \
+  < <(sample 's/- name: sum/- name: sum\n      inputOrder: random/')
+create "should be greater than or equal to 1" "maxOpen 0" \
+  < <(sample 's/- name: sum/- name: sum\n      maxOpen: 0/')
+create ok "named port on an edge" \
+  < <(sample 's/{from: filter, to: sum}/{from: filter, to: sum, port: lookup}/')
+create ok "resultsTTL 0 keeps results" \
+  < <(sample '$a\  resultsTTL: 0s')
 
 # Defaults
 kubectl -n "$NS" create -f "$SAMPLE" >/dev/null || exit 1
-got=$(kubectl -n "$NS" get sr sales-dk -o jsonpath='{.spec.steps[0].maxRestarts} {.spec.steps[0].replicas} {.spec.edges[0].output} {.spec.signals.driver}')
-if [[ $got == "3 1 default builtin" ]]; then
-  echo "ok    defaults (maxRestarts, replicas, output, signals.driver)"
-else
-  echo "FAIL  defaults: got '$got', want '3 1 default builtin'"; FAILED=1
-fi
+# check_defaults <run> <description> <jsonpath> <want>
+check_defaults() {
+  local got
+  got=$(kubectl -n "$NS" get sr "$1" -o jsonpath="$3")
+  if [[ $got == "$4" ]]; then
+    echo "ok    defaults: $2"
+  else
+    echo "FAIL  defaults: $2: got '$got', want '$4'"; FAILED=1
+  fi
+}
+check_defaults sales-dk "maxRestarts, replicas, output, port, signals.driver" \
+  '{.spec.steps[0].maxRestarts} {.spec.steps[0].replicas} {.spec.edges[0].output} {.spec.edges[0].port} {.spec.signals.driver}' \
+  "3 1 default default builtin"
+check_defaults sales-dk "failurePolicy, scratch, maxOpen, prefetch, inputOrder, resultsTTL" \
+  '{.spec.steps[0].failurePolicy} {.spec.steps[0].scratch} {.spec.steps[0].maxOpen} {.spec.steps[0].prefetch} {.spec.steps[0].inputOrder} {.spec.resultsTTL}' \
+  "stop 10Gi 8 2 arrival 168h"
 sample '/chunks:/d;s/name: sales-dk/name: no-chunks/' | kubectl -n "$NS" create -f - >/dev/null || exit 1
-got=$(kubectl -n "$NS" get sr no-chunks -o jsonpath='{.spec.chunks.maxRows} {.spec.chunks.maxUnacked}')
-if [[ $got == "50000 4" ]]; then
-  echo "ok    defaults when chunks is left out"
+check_defaults no-chunks "when chunks is left out" '{.spec.chunks.maxUnacked}' "4"
+
+# Status: the phase from GO-97 and the counters from GO-115 are accepted.
+if kubectl -n "$NS" patch sr sales-dk --subresource=status --type=merge -p \
+  '{"status":{"phase":"PartiallySucceeded","steps":[{"name":"filter","counts":{"rows_in":57},"errors":1,"replicas":[{"index":0,"failedChunks":3}]}]}}' >/dev/null; then
+  echo "ok    status with PartiallySucceeded, counts and failedChunks"
 else
-  echo "FAIL  defaults when chunks is left out: got '$got', want '50000 4'"; FAILED=1
+  echo "FAIL  status with PartiallySucceeded, counts and failedChunks"; FAILED=1
 fi
 
 # Updating
@@ -93,6 +118,8 @@ update "edges is immutable" "removing all edges" \
   < <(current | sed '/^  edges:/,/^  [a-z]/{/^  edges:/d;/^  - /d;/^    /d}')
 update "storage is immutable" "changing the bucket" \
   < <(current | sed 's/bucket: flows/bucket: other/')
+update "resultsTTL is immutable" "changing resultsTTL" \
+  < <(current | sed 's/resultsTTL: 168h/resultsTTL: 1h/')
 update ok "setting cancel" \
   < <(current | sed 's/^spec:/spec:\n  cancel: true/')
 update "cancel cannot be undone" "unsetting cancel" \

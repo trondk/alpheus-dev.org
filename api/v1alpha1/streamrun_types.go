@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -56,6 +57,7 @@ type StreamRun struct {
 // +kubebuilder:validation:XValidation:rule="self.storage == oldSelf.storage",message="storage is immutable"
 // +kubebuilder:validation:XValidation:rule="has(self.signals) == has(oldSelf.signals) && (!has(self.signals) || self.signals == oldSelf.signals)",message="signals is immutable"
 // +kubebuilder:validation:XValidation:rule="has(self.ttlAfterFinished) == has(oldSelf.ttlAfterFinished) && (!has(self.ttlAfterFinished) || self.ttlAfterFinished == oldSelf.ttlAfterFinished)",message="ttlAfterFinished is immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.resultsTTL) == has(oldSelf.resultsTTL) && (!has(self.resultsTTL) || self.resultsTTL == oldSelf.resultsTTL)",message="resultsTTL is immutable"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.cancel) || !oldSelf.cancel || (has(self.cancel) && self.cancel)",message="cancel cannot be undone"
 // +kubebuilder:validation:XValidation:rule="!has(self.edges) || self.edges.all(e, self.steps.exists(s, s.name == e.from) && self.steps.exists(s, s.name == e.to))",message="every edge must go from and to an existing step"
 type StreamRunSpec struct {
@@ -110,6 +112,14 @@ type StreamRunSpec struct {
 	//
 	// +optional
 	TTLAfterFinished *metav1.Duration `json:"ttlAfterFinished,omitempty"`
+
+	// ResultsTTL is how long the run's results, error logs and summary are
+	// kept after it has finished; "0s" means the controller never deletes
+	// them (GO-78).
+	//
+	// +optional
+	// +default="168h"
+	ResultsTTL *metav1.Duration `json:"resultsTTL,omitempty"`
 }
 
 // Step is one container in the flow.
@@ -171,7 +181,68 @@ type Step struct {
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=100
 	MaxRestarts *int32 `json:"maxRestarts,omitempty"`
+
+	// FailurePolicy says what happens when a replica has used all its
+	// restarts: stop ends the whole run, continue ends that replica's
+	// streams and the run finishes as PartiallySucceeded (GO-97).
+	//
+	// +optional
+	// +default="stop"
+	FailurePolicy FailurePolicy `json:"failurePolicy,omitempty"`
+
+	// Scratch is the size of the replica's scratch folder, where input and
+	// output chunks are files (GO-106).
+	//
+	// +optional
+	// +default="10Gi"
+	Scratch *resource.Quantity `json:"scratch,omitempty"`
+
+	// MaxOpen is how many input chunks the component may have open at once
+	// (GO-110).
+	//
+	// +optional
+	// +default=8
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=1000
+	MaxOpen *int32 `json:"maxOpen,omitempty"`
+
+	// Prefetch is how many chunks per incoming stream the agent fetches
+	// ahead (GO-111).
+	//
+	// +optional
+	// +default=2
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	Prefetch *int32 `json:"prefetch,omitempty"`
+
+	// InputOrder is the order of chunks from different streams: arrival,
+	// as they become ready, or deterministic, one from each stream in turn
+	// (GO-112).
+	//
+	// +optional
+	// +default="arrival"
+	InputOrder InputOrder `json:"inputOrder,omitempty"`
 }
+
+// FailurePolicy is what happens when a replica has used all its restarts.
+//
+// +kubebuilder:validation:Enum=stop;continue
+type FailurePolicy string
+
+const (
+	FailureStop     FailurePolicy = "stop"
+	FailureContinue FailurePolicy = "continue"
+)
+
+// InputOrder is the order input chunks are given to the component in.
+//
+// +kubebuilder:validation:Enum=arrival;deterministic
+type InputOrder string
+
+const (
+	InputArrival       InputOrder = "arrival"
+	InputDeterministic InputOrder = "deterministic"
+)
 
 // Edge connects an output of one step to the input of another. A step's
 // output can have several edges (fan-out), and a step can have several
@@ -184,7 +255,7 @@ type Edge struct {
 	// +kubebuilder:validation:MaxLength=20
 	From string `json:"from"`
 
-	// Output is the producer's named output, as given to Emit in the SDK.
+	// Output is the producer's named output, as given to Create in the SDK.
 	//
 	// +optional
 	// +default="default"
@@ -199,19 +270,28 @@ type Edge struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=20
 	To string `json:"to"`
-}
 
-// ChunkPolicy sets chunk size and backpressure.
-type ChunkPolicy struct {
-	// MaxRows is the largest number of rows in one chunk.
+	// Port is the consumer's named input the edge ends in (GO-108).
 	//
 	// +optional
-	// +default=50000
-	// +kubebuilder:validation:Minimum=1
-	MaxRows int32 `json:"maxRows,omitempty"`
+	// +default="default"
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=20
+	// +kubebuilder:validation:Pattern=`^[a-z]([a-z0-9-]*[a-z0-9])?$`
+	Port string `json:"port,omitempty"`
+}
 
-	// MaxUnacked is how many chunks on an edge may wait for all consumers to
-	// ack them before the producer's Emit blocks.
+// ChunkPolicy sets chunk size and backpressure. A chunk is a file the
+// component chose the size of; Alpheus does not cut it.
+type ChunkPolicy struct {
+	// MaxBytes is the largest chunk; closing a larger file is an error
+	// (GO-105). Not set means no limit.
+	//
+	// +optional
+	MaxBytes *resource.Quantity `json:"maxBytes,omitempty"`
+
+	// MaxUnacked is how many chunks a consumer replica may have unacked
+	// from a stream before the producer blocks (GO-35).
 	//
 	// +optional
 	// +default=4
@@ -305,15 +385,19 @@ type StompSignals struct {
 
 // RunPhase is the phase of a run.
 //
-// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed;Cancelled
+// +kubebuilder:validation:Enum=Pending;Running;Succeeded;PartiallySucceeded;Failed;Cancelled
 type RunPhase string
 
 const (
 	RunPending   RunPhase = "Pending"
 	RunRunning   RunPhase = "Running"
 	RunSucceeded RunPhase = "Succeeded"
-	RunFailed    RunPhase = "Failed"
-	RunCancelled RunPhase = "Cancelled"
+	// RunPartiallySucceeded means the run finished, but a replica with
+	// failurePolicy continue gave up and some input chunks were not
+	// processed (GO-97).
+	RunPartiallySucceeded RunPhase = "PartiallySucceeded"
+	RunFailed             RunPhase = "Failed"
+	RunCancelled          RunPhase = "Cancelled"
 )
 
 // StepPhase is the phase of a step.
@@ -420,6 +504,29 @@ type StepStatus struct {
 	// +listType=map
 	// +listMapKey=index
 	Replicas []ReplicaStatus `json:"replicas,omitempty"`
+
+	// Counts are the component's committed counters, summed over its
+	// replicas, per unit (GO-115). They are exact, also after restarts.
+	//
+	// +optional
+	Counts map[string]int64 `json:"counts,omitempty"`
+
+	// Errors and Warnings are how many entries the step's error log has,
+	// and ErrorsDropped how many were not kept because of the limits
+	// (GO-119, GO-120).
+	//
+	// +optional
+	Errors int64 `json:"errors,omitempty"`
+	// +optional
+	Warnings int64 `json:"warnings,omitempty"`
+	// +optional
+	ErrorsDropped int64 `json:"errorsDropped,omitempty"`
+
+	// ErrorLog is the prefix of the step's error log in the bucket:
+	// results/<run>/<uid>/errors/<step>/ (GO-118).
+	//
+	// +optional
+	ErrorLog string `json:"errorLog,omitempty"`
 }
 
 // ReplicaStatus is the state of one replica of a step.
@@ -451,10 +558,18 @@ type ReplicaStatus struct {
 	// +optional
 	Pod string `json:"pod,omitempty"`
 
-	// Message says why the replica failed.
+	// Message says why the replica failed, or while it runs, the
+	// component's latest progress report (GO-122).
 	//
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// FailedChunks is how many input chunks assigned to the replica were
+	// never processed, because it gave up with failurePolicy continue
+	// (GO-97).
+	//
+	// +optional
+	FailedChunks int64 `json:"failedChunks,omitempty"`
 }
 
 // EdgeStatus is the progress of one edge.
@@ -470,10 +585,10 @@ type EdgeStatus struct {
 	// +optional
 	Chunks int64 `json:"chunks,omitempty"`
 
-	// Rows is how many rows the producer's replicas have committed.
+	// Bytes is how many bytes the producer's replicas have committed.
 	//
 	// +optional
-	Rows int64 `json:"rows,omitempty"`
+	Bytes int64 `json:"bytes,omitempty"`
 
 	// Acked is how many chunks the consumer's replicas have acked. Chunks
 	// minus Acked is the edge's lag.
@@ -526,10 +641,16 @@ type ResultStatus struct {
 	// +optional
 	Chunks int64 `json:"chunks,omitempty"`
 
-	// Rows is how many rows the result has.
+	// Bytes is how many bytes the result has.
 	//
 	// +optional
-	Rows int64 `json:"rows,omitempty"`
+	Bytes int64 `json:"bytes,omitempty"`
+
+	// Counts are the producing step's committed counters for the result,
+	// per unit (GO-79).
+	//
+	// +optional
+	Counts map[string]int64 `json:"counts,omitempty"`
 }
 
 // StreamRunList is a list of StreamRuns.
