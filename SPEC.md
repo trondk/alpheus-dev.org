@@ -57,23 +57,25 @@ Mapper markeret *(findes)* er bygget; resten er planlagt.
 ```
 alpheus/
 ├── SPEC.md                denne specifikation (findes)
-├── Makefile               generate, test, test-crd, test-s3 (findes)
+├── Makefile               generate, proto, test, test-crd, test-s3, test-agent-s3 (findes)
+├── buf.gen.yaml           kodegenerering fra proto/ (findes)
 ├── api/v1alpha1/          StreamRun-typer med kubebuilder-markører (findes)
 ├── cmd/
 │   ├── alpheus/           CLI
 │   ├── alpheus-controller/
-│   └── alpheus-agent/
+│   └── alpheus-agent/     agentens binær (findes)
 ├── internal/
 │   ├── controller/        reconcile-løkke, pod-spec, status
-│   ├── agent/             socket-server, ind- og udgange, genstart
+│   ├── agent/             socket-server, ind- og udgange, genstart (findes)
 │   ├── chunk/             navngivning, manifest, ack-filer, checksum (findes)
-│   ├── signal/            driver-interface
-│   │   ├── builtin/       gRPC-hub i controlleren og klient i agenten
+│   ├── pb/                genereret Go-kode fra proto/ (findes)
+│   ├── signal/            driver-interface (findes)
+│   │   ├── builtin/       gRPC-hub i controlleren og klient i agenten (findes)
 │   │   └── stomp/         STOMP-driver til fx Artemis
 │   ├── store/             S3-klient bag et lille interface (findes)
 │   └── version/
-├── sdk/                   offentligt komponent-SDK (findes, uden agent-mode)
-├── proto/                 component.proto og signal.proto
+├── sdk/                   offentligt komponent-SDK, lokal mode og agent-mode (findes)
+├── proto/                 component.proto og signal.proto (findes)
 ├── config/                genererede CRD-, RBAC- og webhook-manifester
 │   ├── crd/bases/         StreamRun-CRD'en (findes)
 │   └── samples/           eksempler, bl.a. testcase03-replicas (findes)
@@ -106,7 +108,8 @@ stadig kun foreslået.
 | Kubernetes-klient og controller | `sigs.k8s.io/controller-runtime`, `k8s.io/client-go` | Apache 2.0 | Godkendt, i brug (v0.25.2; k8s.io v0.37.0) |
 | CRD-generering | `sigs.k8s.io/controller-tools` (kun build) | Apache 2.0 | Godkendt, i brug (v0.23.0, `go tool`) |
 | S3 | `github.com/minio/minio-go/v7` | Apache 2.0 | Godkendt, i brug (v7.4.1) |
-| gRPC | `google.golang.org/grpc`, `google.golang.org/protobuf` | Apache 2.0 / BSD | Foreslået (trin 4) |
+| gRPC | `google.golang.org/grpc`, `google.golang.org/protobuf` | Apache 2.0 / BSD | Godkendt, i brug (v1.83.2 og v1.36.12) |
+| Protobuf-generering | `protoc-gen-go`, `protoc-gen-go-grpc` (kun build, `go tool`), kørt af `buf` | BSD / Apache 2.0 | Godkendt sammen med gRPC (v1.36.12 og v1.6.2) |
 | STOMP | `github.com/go-stomp/stomp/v3` | Apache 2.0 | Foreslået (trin 9) |
 | CLI | `github.com/spf13/cobra` | Apache 2.0 | Foreslået (trin 10) |
 | Metrics | `github.com/prometheus/client_golang` | Apache 2.0 | Foreslået |
@@ -279,6 +282,7 @@ service Agent {
   rpc Close(CloseRequest) returns (CloseResponse);     // output-chunken er skrevet færdig
   rpc Done(DoneRequest) returns (DoneResponse);        // input-chunken er færdigbehandlet
   rpc Observe(stream ObserveRequest) returns (ObserveResponse); // tællere, fejl, fremdrift (10.1)
+  rpc Finish(FinishRequest) returns (FinishResponse);  // komponenten er færdig; alle udgange afsluttes
 }
 ```
 
@@ -286,7 +290,11 @@ service Agent {
 |---|---|---|
 | GO-27 | — | Udgået: erstattet af GO-107. |
 | GO-28 | — | Udgået: Alpheus kender ikke skemaer. Skemavalidering er komponentens eller MCPipes ansvar. |
-| GO-29 | SKAL | Hvis komponenten ikke har kaldt `Next` inden for en konfigurerbar tid efter start, markeres trinnet som fejlet. |
+| GO-29 | SKAL | Hvis komponenten ikke har kontaktet agenten (et kald eller `Observe`-strømmen) inden for en konfigurerbar tid efter start (standard 5 minutter), markeres trinnet som fejlet. En kilde kalder aldrig `Next`, så kontakt tæller i stedet for `Next`. |
+| GO-125 | SKAL | `Finish` siger, at komponenten er færdig: den har læst al sin input, og output fra `OnEOS` er lukket. Agenten afviser `Finish`, hvis der er input-chunks, der ikke er læst eller ikke er `Done`. Derefter skriver agenten `eos` i alle udgående manifester (GO-80, GO-91). En komponent, der stopper uden `Finish`, har fejlet, og dens udgange afsluttes ikke. |
+| GO-126 | SKAL | Hver besked på `Observe` har et løbenummer, og `Done`, `Close` og `Finish` angiver nummeret på den sidste besked, komponenten sendte før kaldet. Agenten venter på den besked, før den committer. gRPC garanterer ikke rækkefølgen på tværs af strømme, så uden nummeret kunne tællere fra en chunk komme med i den næste. |
+| GO-127 | SKAL | `Next` angiver, om komponenten har registreret `OnEOS` (GO-95). Det må ikke ændre sig efter første `Next`; agenten afviser det med en brugsfejl. Agenten venter med at hente input til første `Next`, fordi genstart af et tilstandsfuldt trin begynder forfra. |
+| GO-128 | SKAL | Agenten får sin konfiguration fra controlleren som JSON i `ALPHEUS_AGENT_CONFIG` (run, UID, trin, replika, forsøgsnummer, ind- og udgående kanter og trinnets grænser). S3-legitimation og certifikater til signal-hub'en kommer som separate miljøvariabler fra Secrets. Efter `Finish` kører agenten videre, til den får SIGTERM, som en native sidecar skal. |
 
 #### Filer i stedet for batches
 
@@ -668,7 +676,16 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
 3. `sdk` med lokal testmode og en filter-komponent. *Færdig*: fil-API'et
    (GO-101 til GO-112), tællere og fejllog (10.1), og filter i CSV.
    Agent-mode kommer med agenten i trin 4.
-4. Agenten med `builtin`-signaler, kørt lokalt mod Garage.
+4. Agenten med `builtin`-signaler, kørt lokalt mod Garage. *Færdig*:
+   `internal/agent`, `internal/signal/builtin`, `cmd/alpheus-agent` og
+   agent-mode i SDK'et. Agenter og komponenter kører i samme proces mod
+   hukommelseslager og mod Garage (`make test-agent-s3`) med
+   testcase03's form, genstart af `filter` og af det tilstandsfulde
+   `sum`, kilde-genstart (GO-92), fencing (GO-68) og backpressure
+   (GO-35). Fejllog og tællere skrives under `errors/<trin>/<replika>/`
+   efter de udgående manifester, så de aldrig står to gange, men kan
+   mangle efter et nedbrud lige derimellem (se GO-115 i 16). mTLS til
+   hub'en (GO-41) venter på controlleren, der udsteder certifikaterne.
 5. Controlleren med envtest.
 6. E2E på Talos i Vagrant-VM'en med testcase01.
 7. Fan-out og fan-in med testcase02, replikaer med testcase03-replicas.
@@ -688,3 +705,12 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
 - Skal `status.results` pege på en særskilt nøgle med kun læseadgang til
   `results/<run>/<uid>/` (fx `spec.storage.resultsSecretRef`), i stedet
   for agenternes nøgle til hele bucketen (5.2)?
+- Hvor committes tællere og fejllog for et trin med input (GO-115,
+  GO-118)? En input-chunk uden output har ingen manifest-post. Agenten
+  skriver dem nu i `results/<run>/<uid>/errors/<trin>/<replika>/`
+  efter de udgående manifester, så de kan mangle, men aldrig står to
+  gange. Præcise tal kræver, at de står i selve commit-skrivningen, fx
+  i de udgående manifester ved siden af `consumed`.
+- Et trin, der hedder `errors`, får resultater under
+  `results/<run>/<uid>/errors/`, samme sted som fejlloggen. Skal navnet
+  afvises i CRD'en, eller skal fejlloggen flyttes (fx til `_errors/`)?

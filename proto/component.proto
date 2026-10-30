@@ -1,0 +1,148 @@
+// Copyright The Alpheus Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// The component API (SPEC 7.2): what a component asks of its agent over the
+// Unix socket. Data never goes over the socket; chunks are files in the
+// pod's scratch folder (GO-102).
+//
+// Errors use gRPC status codes: InvalidArgument and FailedPrecondition mean
+// the component used the API wrongly, ResourceExhausted that the scratch
+// folder is nearly full (GO-106), and Aborted that the agent is stopping.
+syntax = "proto3";
+
+package alpheus.component.v1;
+
+option go_package = "alpheus-dev.org/alpheus/internal/pb/componentpb";
+
+service Agent {
+  // Next returns the next input chunk as a local file, or EOS (GO-108,
+  // GO-109). It blocks until a chunk is ready or while maxOpen chunks are
+  // open (GO-110).
+  rpc Next(NextRequest) returns (NextResponse);
+  // Create starts a new output chunk as a local file on an output. It may
+  // block while consumers catch up (GO-35).
+  rpc Create(CreateRequest) returns (CreateResponse);
+  // Close says the output chunk is written. A source's chunk is committed
+  // at once (GO-91); otherwise it is committed at Done (GO-90).
+  rpc Close(CloseRequest) returns (CloseResponse);
+  // Done says the input chunk is handled. Its output, counts and log
+  // entries are committed together (GO-90, GO-115, GO-118).
+  rpc Done(DoneRequest) returns (DoneResponse);
+  // Observe carries counters, log entries and progress (GO-113). It never
+  // blocks the component (GO-124).
+  rpc Observe(stream ObserveRequest) returns (ObserveResponse);
+  // Finish says the component has finished successfully: it has read all
+  // of its input, and output made at EOS is closed. The agent then ends
+  // every output (GO-80, GO-91).
+  rpc Finish(FinishRequest) returns (FinishResponse);
+}
+
+message NextRequest {
+  // Port limits Next to one input; empty means any input (GO-109).
+  string port = 1;
+  // Stateful is true when the component has registered OnEOS (GO-95). It
+  // must not change after the first Next.
+  bool stateful = 2;
+}
+
+message NextResponse {
+  // EOS is true when the input (or the port asked for) has no more
+  // chunks for this replica; chunk is then empty.
+  bool eos = 1;
+  InputChunk chunk = 2;
+}
+
+message InputChunk {
+  // ID names the chunk in Create and Done.
+  int64 id = 1;
+  string port = 2;
+  // Step and replica are the producer, and n the chunk's number in the
+  // producer's stream.
+  string step = 3;
+  int32 replica = 4;
+  int64 n = 5;
+  string path = 6;
+  string ext = 7;
+  int64 bytes = 8;
+}
+
+message CreateRequest {
+  string output = 1;
+  string ext = 2;
+  // Input is the ID of the input chunk the output is made from, or 0 for
+  // a source's chunk or output made at EOS.
+  int64 input = 3;
+}
+
+message CreateResponse {
+  int64 id = 1;
+  string path = 2;
+}
+
+message CloseRequest {
+  int64 id = 1;
+  // ObserveSeq is the last Observe message sent before Close, so a
+  // source's counts are committed with its chunk.
+  int64 observe_seq = 2;
+}
+
+message CloseResponse {
+  int64 bytes = 1;
+}
+
+message DoneRequest {
+  int64 id = 1;
+  // ObserveSeq is the last Observe message sent before Done. The agent
+  // waits for it, so nothing reported for the chunk is left out.
+  int64 observe_seq = 2;
+}
+
+message DoneResponse {}
+
+message ObserveRequest {
+  // Seq numbers the messages of the stream from 1.
+  int64 seq = 1;
+  // Input is the input chunk the message belongs to, or 0 for a source or
+  // for EOS.
+  int64 input = 2;
+  oneof report {
+    Count count = 3;
+    LogEntry log = 4;
+    string progress = 5;
+  }
+}
+
+message Count {
+  string unit = 1;
+  int64 n = 2;
+}
+
+message LogEntry {
+  // Level is "error" or "warn".
+  string level = 1;
+  string code = 2;
+  string message = 3;
+  // Fields is a JSON object, or empty.
+  bytes fields = 4;
+  // Time is when the component reported it, in Unix nanoseconds.
+  int64 time = 5;
+}
+
+message ObserveResponse {}
+
+message FinishRequest {
+  int64 observe_seq = 1;
+}
+
+message FinishResponse {}

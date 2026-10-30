@@ -202,7 +202,15 @@ func run(ctx context.Context, log *slog.Logger, h Handler) error {
 			return fmt.Errorf("%w: no agent (%s is not set); for local mode set %s=local, %s and %s",
 				ErrUsage, EnvSocket, EnvMode, EnvLocalInput, EnvLocalOutput)
 		}
-		return fmt.Errorf("%w: agent mode is not available in this version of the SDK", ErrUsage)
+		cfg := AgentConfig{Socket: os.Getenv(EnvSocket), Settings: []byte(os.Getenv(EnvSettings))}
+		var err error
+		if cfg.Replica, err = intEnv(EnvReplica, 0); err != nil {
+			return err
+		}
+		if cfg.Replicas, err = intEnv(EnvReplicas, 1); err != nil {
+			return err
+		}
+		return RunAgent(ctx, cfg, h)
 	default:
 		return fmt.Errorf("%w: %s=%q, want local or empty", ErrUsage, EnvMode, mode)
 	}

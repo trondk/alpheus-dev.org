@@ -1,0 +1,66 @@
+// Copyright The Alpheus Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// The builtin signal driver (SPEC 8, GO-38): each agent keeps one stream
+// open to the hub, which forwards signals per run and edge and stores
+// nothing. Signals only wake agents up; correctness never depends on them
+// (GO-40).
+syntax = "proto3";
+
+package alpheus.signal.v1;
+
+option go_package = "alpheus-dev.org/alpheus/internal/pb/signalpb";
+
+service Hub {
+  rpc Connect(stream ClientMessage) returns (stream Signal);
+}
+
+message ClientMessage {
+  oneof message {
+    Subscribe subscribe = 1;
+    Signal signal = 2;
+  }
+}
+
+// Subscribe asks for the signals of one edge of a run.
+message Subscribe {
+  string run = 1;
+  string edge = 2;
+}
+
+enum Kind {
+  KIND_UNSPECIFIED = 0;
+  // READY: the stream has committed chunks up to n.
+  KIND_READY = 1;
+  // ACK: a consumer replica has acked chunk n of the stream.
+  KIND_ACK = 2;
+  // EOS: the stream has ended.
+  KIND_EOS = 3;
+  // FAIL: the producer of the stream has failed.
+  KIND_FAIL = 4;
+}
+
+message Signal {
+  Kind kind = 1;
+  string run = 2;
+  string edge = 3;
+  // Replica is the producer replica that owns the stream.
+  int32 replica = 4;
+  int64 n = 5;
+  // Consumer step and replica, for ACK.
+  string consumer_step = 6;
+  int32 consumer_replica = 7;
+  int64 epoch = 8;
+  string reason = 9;
+}

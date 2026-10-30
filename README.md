@@ -106,7 +106,9 @@ The Go module `alpheus-dev.org/alpheus` is the repository root.
 | [`SPEC.md`](SPEC.md) | Implementation specification for the Go program: controller, agent, CLI and component SDK |
 | [`api/`](api/) | The `StreamRun` API types (public) |
 | [`sdk/`](sdk/) | The component SDK (public) |
-| [`internal/`](internal/) | Chunk protocol, object storage and the rest of the program (private) |
+| [`internal/`](internal/) | Chunk protocol, object storage, the agent, signals and the rest of the program (private) |
+| [`cmd/`](cmd/) | The binaries, so far `alpheus-agent` |
+| [`proto/`](proto/) | The component API and the signal hub's protocol, as gRPC |
 | [`config/`](config/) | Generated CRD and samples |
 | [`test/`](test/) | Test components and end-to-end tests |
 | [`vagrant/`](vagrant/) | Local test cluster: Talos in a VM with Garage and Zot |

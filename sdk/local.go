@@ -350,14 +350,29 @@ func (l *local) Create(ctx context.Context, output, ext string) (*File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("output %s: %w", output, err)
 	}
-	file := &File{f: f, path: f.Name(), output: output, ext: ext, maxBytes: l.cfg.MaxBytes, onClose: l.closedFile}
+	file := &File{f: f, path: f.Name(), output: output, ext: ext, onClose: l.closedFile}
 	l.open = append(l.open, file)
 	return file, nil
 }
 
-// closedFile is called when the component closes an output file. A source's
-// chunk is committed at once (GO-91); otherwise it waits for Done (GO-90).
+// closedFile is called when the component closes an output file. Its size
+// and SHA-256 are taken from the file as it is now, so they also cover what
+// other tools wrote to Path. A source's chunk is committed at once (GO-91);
+// otherwise it waits for Done (GO-90).
 func (l *local) closedFile(f *File) error {
+	r, err := os.Open(f.path)
+	if err != nil {
+		return fmt.Errorf("output %s: %w", f.output, err)
+	}
+	defer r.Close()
+	hw := chunk.NewHashingWriter(io.Discard)
+	if _, err := io.Copy(hw, r); err != nil {
+		return fmt.Errorf("output %s: %w", f.output, err)
+	}
+	f.size, f.sha256 = hw.Size(), hw.Sum()
+	if l.cfg.MaxBytes > 0 && f.size > l.cfg.MaxBytes {
+		return fmt.Errorf("output %s: chunk is %d bytes, more than maxBytes %d", f.output, f.size, l.cfg.MaxBytes)
+	}
 	l.open = slices.DeleteFunc(l.open, func(o *File) bool { return o == f })
 	l.closed = append(l.closed, f)
 	if l.current == nil && len(l.cfg.Inputs) == 0 {
@@ -434,15 +449,15 @@ func (l *local) writeSummary() error {
 // File is an output chunk being written: one file from Create to Close
 // (GO-104). Write to it, or let another tool write to Path.
 type File struct {
-	f        *os.File
-	path     string
-	output   string
-	ext      string
-	maxBytes int64
-	onClose  func(*File) error
-	closed   bool
-	size     int64
-	sha256   string
+	f       *os.File
+	path    string
+	output  string
+	ext     string
+	id      int64 // the agent's ID, in agent mode
+	onClose func(*File) error
+	closed  bool
+	size    int64
+	sha256  string
 }
 
 func (f *File) Write(p []byte) (int, error) { return f.f.Write(p) }
@@ -450,8 +465,8 @@ func (f *File) Write(p []byte) (int, error) { return f.f.Write(p) }
 // Path is the file's local path, for tools that write by name.
 func (f *File) Path() string { return f.path }
 
-// Close finishes the chunk. Its size and SHA-256 are taken from the file as
-// it is now, so it also covers what other tools wrote to Path.
+// Close finishes the chunk. Its size and checksum are taken from the file
+// as it is now, so they also cover what other tools wrote to Path.
 func (f *File) Close() error {
 	if f.closed {
 		return fmt.Errorf("output %s: chunk closed twice", f.output)
@@ -459,19 +474,6 @@ func (f *File) Close() error {
 	f.closed = true
 	if err := f.f.Close(); err != nil {
 		return fmt.Errorf("output %s: %w", f.output, err)
-	}
-	r, err := os.Open(f.path)
-	if err != nil {
-		return fmt.Errorf("output %s: %w", f.output, err)
-	}
-	defer r.Close()
-	hw := chunk.NewHashingWriter(io.Discard)
-	if _, err := io.Copy(hw, r); err != nil {
-		return fmt.Errorf("output %s: %w", f.output, err)
-	}
-	f.size, f.sha256 = hw.Size(), hw.Sum()
-	if f.maxBytes > 0 && f.size > f.maxBytes {
-		return fmt.Errorf("output %s: chunk is %d bytes, more than maxBytes %d", f.output, f.size, f.maxBytes)
 	}
 	return f.onClose(f)
 }

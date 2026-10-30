@@ -78,15 +78,38 @@ func Progress(ctx context.Context, text string) {
 	}
 }
 
-type observerKey struct{}
-
-func withObserver(ctx context.Context, o *observer) context.Context {
-	return context.WithValue(ctx, observerKey{}, o)
+// reporter takes what a component reports: the observer in local mode, or
+// the stream to the agent.
+type reporter interface {
+	count(unit string, n int64)
+	log(level, code, message string, fields []LogField)
+	progress(text string)
 }
 
-func observerFrom(ctx context.Context) *observer {
-	o, _ := ctx.Value(observerKey{}).(*observer)
-	return o
+type observerKey struct{}
+
+func withObserver(ctx context.Context, r reporter) context.Context {
+	return context.WithValue(ctx, observerKey{}, r)
+}
+
+func observerFrom(ctx context.Context) reporter {
+	r, _ := ctx.Value(observerKey{}).(reporter)
+	return r
+}
+
+// checkCount validates a counter report against the units seen so far and
+// adds its unit (GO-114).
+func checkCount(units map[string]bool, unit string, n int64) error {
+	switch {
+	case !chunk.ValidUnit(unit):
+		return fmt.Errorf("%w: counter unit %q: want lower-case letters, digits and _, at most 32", ErrUsage, unit)
+	case n < 0:
+		return fmt.Errorf("%w: counter %q: negative count %d", ErrUsage, unit, n)
+	case !units[unit] && len(units) >= chunk.MaxUnits:
+		return fmt.Errorf("%w: counter %q: a step can have at most %d units", ErrUsage, unit, chunk.MaxUnits)
+	}
+	units[unit] = true
+	return nil
 }
 
 // LogEntry is one line of the error log, as JSON Lines (GO-117).
@@ -138,18 +161,10 @@ func newObserver(step string, replica int, onProgress func(string)) *observer {
 func (o *observer) count(unit string, n int64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	switch {
-	case !chunk.ValidUnit(unit):
-		o.fail(fmt.Errorf("%w: counter unit %q: want lower-case letters, digits and _, at most 32", ErrUsage, unit))
-		return
-	case n < 0:
-		o.fail(fmt.Errorf("%w: counter %q: negative count %d", ErrUsage, unit, n))
-		return
-	case !o.units[unit] && len(o.units) >= chunk.MaxUnits:
-		o.fail(fmt.Errorf("%w: counter %q: a step can have at most %d units", ErrUsage, unit, chunk.MaxUnits))
+	if err := checkCount(o.units, unit, n); err != nil {
+		o.fail(err)
 		return
 	}
-	o.units[unit] = true
 	o.pending[unit] += n
 }
 

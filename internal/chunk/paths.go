@@ -107,6 +107,22 @@ func ValidExt(ext string) bool { return extPattern.MatchString(ext) }
 // not under it (GO-78).
 func RunPrefix(uid string) string { return path.Join("runs", uid) + "/" }
 
+// RunInfoKey is the object that describes a run's results, so they can be
+// found and cleaned up after the StreamRun is gone:
+// results/<run>/<uid>/run.json (GO-98).
+func RunInfoKey(run, uid string) string { return path.Join("results", run, uid, "run.json") }
+
+// ResultsPrefix is where a step's results are: results/<run>/<uid>/<step>/.
+func ResultsPrefix(run, uid, step string) string {
+	return path.Join("results", run, uid, step) + "/"
+}
+
+// ErrorLogPrefix is where a replica's error log and committed counters
+// are: results/<run>/<uid>/errors/<step>/<replica>/ (GO-118).
+func ErrorLogPrefix(run, uid, step string, replica int) string {
+	return path.Join("results", run, uid, "errors", step, strconv.Itoa(replica)) + "/"
+}
+
 // Assign returns the consumer replica that gets chunk n of the stream from
 // producer replica p, when the consuming step has the given number of
 // replicas: (n + p) mod replicas (GO-76).
