@@ -78,13 +78,16 @@ alpheus/
 ├── proto/                 component.proto og signal.proto (findes)
 ├── config/                genererede CRD-, RBAC- og webhook-manifester (CRD og RBAC findes)
 │   ├── crd/bases/         StreamRun-CRD'en (findes)
+│   ├── manager/           controllerens Deployment, hub-Service og RBAC-binding (findes)
+│   ├── default/           CRD, RBAC og controller samlet, til kustomize (findes)
 │   └── samples/           eksempler, bl.a. testcase03-replicas (findes)
-├── hack/                  boilerplate og test-crd.sh (findes)
+├── hack/                  boilerplate, test-crd.sh, images.sh og e2e.sh (findes)
 ├── charts/alpheus/        Helm-chart
 ├── test/
-│   ├── components/        testkomponenter i CSV: filter (findes), generate og sum
-│   ├── e2e/               testcase01, testcase02, testcase03-replicas og fejltests
-│   └── fixtures/          input og golden files
+│   ├── components/        testkomponenter i CSV: generate, filter og sum (findes)
+│   ├── e2e/               testcase01 (findes), testcase02, testcase03-replicas og fejltests
+│   ├── fixtures/          input og golden files (testcase01 findes)
+│   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── docs/                  kilde til dokumentationen på hjemmesiden
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
 ├── www/                   hjemmesidens specifikation og Hugo-site (findes)
@@ -196,7 +199,7 @@ en strøm med manifest, ligesom en kant, men under
 | GO-78 | SKAL | Resultater slettes ikke af `ttlAfterFinished` eller finalizeren (GO-20). De slettes, når `spec.resultsTTL` er udløbet, regnet fra `finishedAt`. Standard er 7 dage. Værdien `0` betyder, at controlleren aldrig sletter dem, og skal angives eksplicit. |
 | GO-98 | SKAL | Agenten skriver `results/<run>/<uid>/run.json` med runnets navn, namespace, UID, `finishedAt` og `resultsTTL`, før den første resultat-chunk skrives. Så kan resultater findes og ryddes, også efter at StreamRun-objektet er slettet. |
 | GO-99 | BØR | `alpheus results gc` finder resultater, hvis TTL er udløbet, eller hvis StreamRun-objektet ikke længere findes, og sletter dem efter bekræftelse. Med `--dry-run` vises kun, hvad der ville blive slettet. |
-| GO-79 | SKAL | `status.results` har én post pr. resultat med S3-endpoint, bucket, prefix, navnet på Secret'en med nøglerne (`spec.storage.secretRef`) og antal chunks, bytes og komponentens committede tællere (10.1). Det er det, der skal til for at hente resultatet, og `alpheus get` viser det. |
+| GO-79 | SKAL | `status.results` har én post pr. resultat med S3-endpoint, bucket, region, prefix, navnet på Secret'en med nøglerne (`spec.storage.secretRef`) og antal chunks, bytes og komponentens committede tællere (10.1). Det er det, der skal til for at hente resultatet, og `alpheus get` viser det. |
 
 Secret'en i `status.results` er den samme som agenternes, med adgang til
 hele bucketen. Det strider mod princippet om, at agentens nøgle kun
@@ -697,7 +700,23 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    endnu: ServiceAccount og NetworkPolicy pr. run (6.1 trin 2),
    webhook (GO-23), og at hub'en afviser ældre forsøg (GO-41), da
    certifikaterne er pr. run og ikke pr. forsøg.
-6. E2E på Talos i Vagrant-VM'en med testcase01.
+6. E2E på Talos i Vagrant-VM'en med testcase01. *Færdig*: `make e2e`
+   (`hack/e2e.sh`) bygger agent, controller og testkomponenterne som
+   statiske binærer i images på `scratch` (uid 65532, reproducerbare
+   digests), skubber dem til Zot, installerer CRD og controller med
+   `config/default` og kører `test/e2e`. testcase01 (`generate` med
+   `sales.csv` fra `test/fixtures`, `filter` og `sum`) ender i
+   `Succeeded`, resultatet er byte for byte lig med golden file (GO-55)
+   og hentes kun med oplysningerne i `status.results` (GO-82), og
+   tællere og fejllog giver MCPipes rapport (rækker læst, udeladt og
+   afvist, og totalen 1846,50). Tomme linjer tælles ikke, da CSV-læseren
+   springer dem over. Signalerne går gennem hub'en: hvert trin slutter
+   inden for ca. 50 ms efter det forrige. Fundet undervejs: hub'en
+   fejlede ved første start, fordi signal-CA'en blev oprettet, men
+   fejlen fra opslaget blev returneret; controlleren skrev spec'en
+   tilbage, når den satte sin finalizer (`168h` blev til `168h0m0s`), og
+   bruger nu en patch; og `status.results` manglede regionen, som
+   Garage kræver (GO-79).
 7. Fan-out og fan-in med testcase02, replikaer med testcase03-replicas.
 8. Genstart, backpressure og kaos-test.
 9. `stomp`-driveren.

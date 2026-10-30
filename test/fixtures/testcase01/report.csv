@@ -1,0 +1,8 @@
+Metric;Value;Details
+Rows read;11;blank line not counted
+Rows included (DK);7;
+Rows excluded (non-DK);3;SE, NO, DE
+Rows rejected;1;2026-01-10 Kaffe: missing amount
+Blank lines skipped;1;
+Grand total DK;1846,50;
+Status;success;

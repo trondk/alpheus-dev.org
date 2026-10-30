@@ -631,6 +631,10 @@ spec:
                         Prefix of the result's objects: results/<run>/<uid>/<step>/<output>/.
                         Each replica writes a manifest and its chunks in <prefix><replica>/.
                       type: string
+                    region:
+                      description: Region of the bucket, as in spec.storage; some
+                        S3 servers check it.
+                      type: string
                     secretRef:
                       description: |-
                         SecretRef names the Secret with keys for the bucket. For now it is

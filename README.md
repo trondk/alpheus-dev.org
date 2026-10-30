@@ -11,10 +11,9 @@ but object storage in between.
 ```
 
 > **Status: design phase.** The API, the chunk format, the component
-> SDK, the agent and the controller exist and pass their tests against a
-> Kubernetes API server and S3 storage, but no flow has run on a cluster
-> yet and no images are published. Nothing here is ready for use, and
-> everything may change.
+> SDK, the agent and the controller exist, and a first flow runs end to
+> end on a test cluster, but no images are published. Nothing here is
+> ready for use, and everything may change.
 
 
 ## Why "Alpheus"
@@ -58,7 +57,9 @@ run on immutable distributions such as Talos.
 
 ## What it looks like
 
-The controller and agent have not run a flow on a cluster yet.
+A first flow like this one runs end to end on the test cluster; the
+`alpheus` CLI comes later, and until then `kubectl apply -f flow.yaml`
+does the same.
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1
@@ -111,8 +112,9 @@ The Go module `alpheus-dev.org/alpheus` is the repository root.
 | [`internal/`](internal/) | Chunk protocol, object storage, the agent, signals and the rest of the program (private) |
 | [`cmd/`](cmd/) | The binaries `alpheus-controller` and `alpheus-agent` |
 | [`proto/`](proto/) | The component API and the signal hub's protocol, as gRPC |
-| [`config/`](config/) | Generated CRD and samples |
-| [`test/`](test/) | Test components and end-to-end tests |
+| [`config/`](config/) | Generated CRD and RBAC, the controller's deployment, and samples |
+| [`test/`](test/) | Test components, fixtures and end-to-end tests |
+| [`hack/`](hack/) | Scripts: CRD tests, image builds and end-to-end tests |
 | [`vagrant/`](vagrant/) | Local test cluster: Talos in a VM with Garage and Zot |
 | [`www/`](www/) | Specification and Hugo site for the website at [alpheus-dev.org](https://alpheus-dev.org) |
 
@@ -138,8 +140,9 @@ repository is the only copy, and issues can be opened here.
 3. Chunk and manifest handling against an S3-compatible store. *Done.*
 4. Component SDK with a local test mode. *Done.*
 5. Agent, then controller. *Done.*
-6. End-to-end tests on Talos, including restarts and backpressure.
-7. First release, `v0.1.0`.
+6. End-to-end tests on Talos: a first flow. *Done.*
+7. End-to-end tests with fan-out, fan-in, replicas, restarts and backpressure.
+8. First release, `v0.1.0`.
 
 
 ## Go module

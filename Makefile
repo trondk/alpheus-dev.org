@@ -1,4 +1,4 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-s3 test-agent-s3 vet
+.PHONY: all generate proto check-generated check-deps test test-crd test-s3 test-agent-s3 vet images e2e
 
 all: generate vet check-deps test
 
@@ -49,6 +49,16 @@ test-s3:
 # pipeline with signals through the builtin hub and a restart.
 test-agent-s3:
 	$(GARAGE_ENV) go test -race -count=1 -run TestS3 -v ./internal/agent
+
+# Builds the agent, the controller and the test components as images and
+# pushes them to Zot in the Vagrant test cluster (_out/images.env).
+images:
+	hack/images.sh
+
+# Installs the controller in the Vagrant test cluster with those images and
+# runs the testcases in test/e2e against it.
+e2e:
+	hack/e2e.sh
 
 # Alpheus never reads a chunk's content, so it must not depend on Parquet or
 # Arrow (GO-101).

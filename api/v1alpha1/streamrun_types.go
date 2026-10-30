@@ -624,6 +624,11 @@ type ResultStatus struct {
 	// +optional
 	Bucket string `json:"bucket,omitempty"`
 
+	// Region of the bucket, as in spec.storage; some S3 servers check it.
+	//
+	// +optional
+	Region string `json:"region,omitempty"`
+
 	// Prefix of the result's objects: results/<run>/<uid>/<step>/<output>/.
 	// Each replica writes a manifest and its chunks in <prefix><replica>/.
 	//

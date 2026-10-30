@@ -152,6 +152,7 @@ func (rc *Reconciler) results(ctx context.Context, st store.Store, r *v1alpha1.S
 				Output:    output,
 				Endpoint:  r.Spec.Storage.Endpoint,
 				Bucket:    r.Spec.Storage.Bucket,
+				Region:    r.Spec.Storage.Region,
 				Prefix:    prefix + output + "/",
 				SecretRef: r.Spec.Storage.SecretRef,
 			}

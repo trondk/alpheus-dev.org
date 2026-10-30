@@ -114,8 +114,11 @@ func (rc *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Res
 	if !r.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, rc.finalize(ctx, &r)
 	}
+	orig := r.DeepCopy()
 	if controllerutil.AddFinalizer(&r, Finalizer) {
-		if err := rc.Update(ctx, &r); err != nil {
+		// A patch of the finalizers only: an update would write the spec
+		// back as Go encodes it, such as 168h as 168h0m0s.
+		if err := rc.Patch(ctx, &r, client.MergeFromWithOptions(orig, client.MergeFromWithOptimisticLock{})); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -469,8 +472,9 @@ func (rc *Reconciler) finalize(ctx context.Context, r *v1alpha1.StreamRun) error
 	if err := rc.deletePrefix(ctx, r, chunk.RunPrefix(string(r.UID))); err != nil {
 		return err
 	}
+	before := r.DeepCopy()
 	controllerutil.RemoveFinalizer(r, Finalizer)
-	return rc.Update(ctx, r)
+	return rc.Patch(ctx, r, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
 }
 
 func (rc *Reconciler) deletePrefix(ctx context.Context, r *v1alpha1.StreamRun, prefix string) error {

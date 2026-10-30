@@ -1,0 +1,27 @@
+# testcase01 (SPEC 12.1): MCPipe's sales.csv, filtered for Denmark and
+# summed per product. hack/e2e.sh sets the images, pinned by digest, and the
+# test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase01
+spec:
+  steps:
+    - name: generate
+      image: ${GENERATE_IMAGE}
+      settings: {fixture: testcase01/sales.csv}
+    - name: filter
+      image: ${FILTER_IMAGE}
+      settings: {field: country, in: [DK, Denmark, Danmark], delimiter: ";", fold: true}
+    - name: sum
+      image: ${SUM_IMAGE}
+      settings: {group: product, delimiter: ";", decimal: ","}
+  edges:
+    - {from: generate, to: filter}
+    - {from: filter, to: sum}
+  chunks: {maxBytes: 16Mi, maxUnacked: 4}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

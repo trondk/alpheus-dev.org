@@ -19,7 +19,11 @@ limitations under the License.
 // in, and writes them with the header as one CSV chunk per input chunk to
 // the default output. A chunk without matching rows gives no output.
 //
-// Settings: {"field": "country", "in": ["DK"]}
+// Settings: {"field": "country", "in": ["DK"], "delimiter": ";", "fold": true}
+//
+// The delimiter defaults to a comma, and is also used for the output. With
+// fold, values match case-insensitively with spaces trimmed, so " dk "
+// matches DK. A byte order mark and blank lines in the input are skipped.
 //
 // It counts the units rows_in and rows_out, and logs a row with the wrong
 // number of columns as the error bad_row and skips it.
@@ -32,13 +36,28 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"alpheus-dev.org/alpheus/sdk"
+	"alpheus-dev.org/alpheus/test/internal/table"
 )
 
 type settings struct {
-	Field string   `json:"field"`
-	In    []string `json:"in"`
+	Field     string   `json:"field"`
+	In        []string `json:"in"`
+	Delimiter string   `json:"delimiter"`
+	Fold      bool     `json:"fold"`
+
+	comma rune
+}
+
+// match reports whether v is one of the values in.
+func (s settings) match(v string) bool {
+	if !s.Fold {
+		return slices.Contains(s.In, v)
+	}
+	v = strings.TrimSpace(v)
+	return slices.ContainsFunc(s.In, func(w string) bool { return strings.EqualFold(v, w) })
 }
 
 func main() {
@@ -52,6 +71,10 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
 	}
 	if s.Field == "" || len(s.In) == 0 {
 		return fmt.Errorf("%w: settings need field and in", sdk.ErrUsage)
+	}
+	var err error
+	if s.comma, err = table.Delimiter(s.Delimiter); err != nil {
+		return fmt.Errorf("%w: %v", sdk.ErrUsage, err)
 	}
 	for c, err := range in.Chunks(ctx) {
 		if err != nil {
@@ -70,8 +93,7 @@ func filterChunk(ctx context.Context, c sdk.Chunk, out sdk.Output, s settings) e
 		return err
 	}
 	defer src.Close()
-	r := csv.NewReader(src)
-	r.FieldsPerRecord = -1 // checked below, so a bad row is logged, not fatal
+	r := table.NewReader(src, s.comma) // row length is checked below, so a bad row is logged, not fatal
 
 	header, err := r.Read()
 	if errors.Is(err, io.EOF) {
@@ -101,7 +123,7 @@ func filterChunk(ctx context.Context, c sdk.Chunk, out sdk.Output, s settings) e
 			sdk.Error(ctx, "bad_row", "wrong number of columns", sdk.Field("row", row), sdk.Field("columns", len(rec)))
 			continue
 		}
-		if !slices.Contains(s.In, rec[col]) {
+		if !s.match(rec[col]) {
 			continue
 		}
 		if dst == nil {
@@ -110,7 +132,7 @@ func filterChunk(ctx context.Context, c sdk.Chunk, out sdk.Output, s settings) e
 			if dst, err = out.Create(ctx, sdk.DefaultOutput, "csv"); err != nil {
 				return err
 			}
-			w = csv.NewWriter(dst)
+			w = table.NewWriter(dst, s.comma)
 			w.Write(header)
 		}
 		w.Write(rec)

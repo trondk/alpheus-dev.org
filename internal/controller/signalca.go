@@ -56,10 +56,18 @@ type CA struct {
 }
 
 // LoadCA reads the CA from its Secret, creating it if it does not exist.
+// The hub and the reconciler may both create it at startup; the one that
+// loses waits until its client sees the winner's Secret.
 func LoadCA(ctx context.Context, c client.Client, namespace string) (*CA, error) {
-	var s corev1.Secret
-	err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: CASecret}, &s)
-	if apierrors.IsNotFound(err) {
+	for {
+		var s corev1.Secret
+		err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: CASecret}, &s)
+		if err == nil {
+			return parseCA(s.Data[corev1.TLSCertKey], s.Data[corev1.TLSPrivateKeyKey])
+		}
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("signal CA: %w", err)
+		}
 		certPEM, keyPEM, err := newCA()
 		if err != nil {
 			return nil, err
@@ -70,14 +78,18 @@ func LoadCA(ctx context.Context, c client.Client, namespace string) (*CA, error)
 			Data:       map[string][]byte{corev1.TLSCertKey: certPEM, corev1.TLSPrivateKeyKey: keyPEM},
 		}
 		err = c.Create(ctx, &s)
-		if apierrors.IsAlreadyExists(err) {
-			return LoadCA(ctx, c, namespace)
+		if err == nil {
+			return parseCA(certPEM, keyPEM)
+		}
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("signal CA: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	if err != nil {
-		return nil, fmt.Errorf("signal CA: %w", err)
-	}
-	return parseCA(s.Data[corev1.TLSCertKey], s.Data[corev1.TLSPrivateKeyKey])
 }
 
 func newCA() (certPEM, keyPEM []byte, err error) {

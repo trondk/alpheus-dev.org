@@ -36,6 +36,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -552,5 +553,51 @@ func TestHubMTLS(t *testing.T) {
 			t.Fatal("a client without a certificate got a signal")
 		case <-time.After(50 * time.Millisecond):
 		}
+	}
+}
+
+// The first LoadCA in a namespace creates the CA and returns it; the next
+// one reads the same CA back.
+func TestLoadCACreates(t *testing.T) {
+	ns := namespace(t)
+	first, err := LoadCA(t.Context(), k8s, ns)
+	if err != nil {
+		t.Fatalf("first LoadCA: %v", err)
+	}
+	again, err := LoadCA(t.Context(), k8s, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first.CertPEM(), again.CertPEM()) {
+		t.Error("the second LoadCA returned another CA")
+	}
+}
+
+// Adding the finalizer must not write the spec back as Go encodes it:
+// resultsTTL stays 168h, not 168h0m0s.
+func TestSpecNotRewritten(t *testing.T) {
+	ns := namespace(t)
+	u := &unstructured.Unstructured{}
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(testcase03(ns, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.SetUnstructuredContent(obj)
+	u.SetGroupVersionKind(v1alpha1.GroupVersion.WithKind("StreamRun"))
+	unstructured.SetNestedField(u.Object, "168h", "spec", "resultsTTL")
+	if err := k8s.Create(t.Context(), u); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "finalizer", func() string {
+		if err := k8s.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			return err.Error()
+		}
+		if len(u.GetFinalizers()) == 0 {
+			return "none"
+		}
+		return ""
+	})
+	if ttl, _, _ := unstructured.NestedString(u.Object, "spec", "resultsTTL"); ttl != "168h" {
+		t.Errorf("resultsTTL = %q, want 168h", ttl)
 	}
 }
