@@ -40,9 +40,9 @@ appears in the next.
   from the first chunk it had not acknowledged.
 - **Backpressure built in.** A fast producer waits when its consumer
   falls behind, instead of filling the store.
-- **Components only see batches.** A sidecar agent handles storage,
-  signals and retries, so a component is a function from Arrow batches
-  to Arrow batches, in any language.
+- **Components only see files.** A sidecar agent handles storage,
+  signals and retries, so a component reads input files and writes
+  output files, in any format and any language.
 - **Kubernetes-native.** A run is one `StreamRun` custom resource.
   Create it to start the run, read its status to follow it, delete it
   to stop it and clean up.
@@ -53,6 +53,39 @@ appears in the next.
 Alpheus needs only the Kubernetes API and an S3 endpoint: no host
 access, no privileged containers, no node changes. It is designed to
 run on immutable distributions such as Talos.
+
+
+## Why Alpheus
+
+Alpheus streams data concurrently between steps. It works with files in
+any format and needs only an S3 endpoint: no broker and no privileged
+components.
+
+That fits environments where every extra service is a cost: sovereign
+and air-gapped clusters, where each component has to be approved and
+run in-house, and immutable infrastructure, where nothing may touch the
+nodes. If you can run Kubernetes and an S3-compatible store such as
+Garage or MinIO, you can run Alpheus.
+
+Other tools do part of this:
+
+| | Steps run concurrently | Between steps | Extra infrastructure |
+|---|---|---|---|
+| **Alpheus** | Yes, chunk by chunk | Files in object storage, any format | None beyond S3 |
+| [Argo Workflows](https://argoproj.github.io/workflows/) with artifacts | No: a step starts when the one before it has finished | Artifacts in object storage | Argo's controller and server |
+| [Pachyderm](https://www.pachyderm.com/) | Within a job, but a downstream pipeline starts on its input's finished commit | Versioned files in object storage | Pachyderm's own services and database |
+| [Numaflow](https://numaflow.numaproj.io/) | Yes, message by message | Messages in an inter-step buffer | A JetStream cluster for the buffer |
+
+Pick one of those when you need what it was built for:
+- **Argo Workflows** is the right choice for batch jobs where a step
+  needs all of its input before it starts.
+- **Pachyderm** is the right choice when you need data versioning and
+  lineage.
+- **Numaflow** is the right choice for event streams with low latency.
+
+Pick Alpheus when large files should flow through a pipeline of
+containers as they are produced, and object storage is the only shared
+service you want to depend on.
 
 
 ## What it looks like
