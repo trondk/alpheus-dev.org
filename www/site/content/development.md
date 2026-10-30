@@ -181,10 +181,14 @@ containers have stopped, and the test checks the result as before.
   must set the pace for the whole run.
 - testcase06 runs testcase02's fan-out and fan-in and kills a random pod
   about every three seconds, twelve pods in all unless
-  `BENCH_CHAOS_KILLS` says otherwise, then lets the run finish. The result and the counters must still be exact.
-  `BENCH_CHAOS_SEED` repeats a run's choice of pods.
+  `BENCH_CHAOS_KILLS` says otherwise, then lets the run finish. The
+  result and the counters must still be exact. `BENCH_CHAOS_SEED`
+  repeats a run's choice of pods.
 
-`make e2e` runs them with the others.
+`make e2e` runs them with the others. Every end-to-end test runs in its
+own namespace and deletes it at the end. The test fails if the namespace
+is not gone within three minutes, since a run must clean up its data
+even when its storage keys are deleted with it.
 
 Run every end-to-end test again without rebuilding the images with
 `SKIP_IMAGES=1 hack/e2e.sh`. Images are built with fixed timestamps, so

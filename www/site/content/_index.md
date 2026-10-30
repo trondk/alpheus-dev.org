@@ -23,10 +23,12 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
   output chunks, and commits them in a manifest for each stream. A chunk
   exists once the manifest lists it.
 - Agents tell each other that a chunk is ready through a small hub in
-  the controller, over mutual TLS. A lost signal only delays things:
-  agents also read the manifests.
+  the controller, over mutual TLS with a certificate for each attempt of
+  a pod, so an old attempt is shut out. A lost signal only delays
+  things: agents also read the manifests.
 - A step that crashes starts again from its manifests, without losing
-  or repeating output.
+  or repeating output. Its counters and error log are committed with
+  the output, so they stay exact too.
 
 ## A minimal flow
 
