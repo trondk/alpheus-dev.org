@@ -649,7 +649,7 @@ spec:
                     errorLog:
                       description: |-
                         ErrorLog is the prefix of the step's error log in the bucket:
-                        results/<run>/<uid>/errors/<step>/ (GO-118).
+                        results/<run>/<uid>/_errors/<step>/ (GO-118).
                       type: string
                     errors:
                       description: |-

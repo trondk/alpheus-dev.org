@@ -64,6 +64,10 @@ type Signal struct {
 	Reason          string
 }
 
+// RunKey is how signals name a run: its name and UID, so a run created
+// again with the same name never gets the old run's signals (GO-83).
+func RunKey(name, uid string) string { return name + "/" + uid }
+
 // Driver publishes signals and delivers those of the edges subscribed to.
 type Driver interface {
 	// Publish sends a signal. It may drop it when the connection is down.

@@ -118,9 +118,10 @@ func ResultsPrefix(run, uid, step string) string {
 }
 
 // ErrorLogPrefix is where a replica's error log and committed counters
-// are: results/<run>/<uid>/errors/<step>/<replica>/ (GO-118).
+// are: results/<run>/<uid>/_errors/<step>/<replica>/ (GO-118). Step names
+// cannot start with _, so no step's results collide with it.
 func ErrorLogPrefix(run, uid, step string, replica int) string {
-	return path.Join("results", run, uid, "errors", step, strconv.Itoa(replica)) + "/"
+	return path.Join("results", run, uid, "_errors", step, strconv.Itoa(replica)) + "/"
 }
 
 // Assign returns the consumer replica that gets chunk n of the stream from

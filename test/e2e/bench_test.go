@@ -209,19 +209,6 @@ func (b *bench) consumed(from ...string) map[string][]*chunk.Manifest {
 	return last
 }
 
-// countsAtMost checks that no step counted more than want chunks.
-func (b *bench) countsAtMost(want map[string]int) {
-	b.t.Helper()
-	for step, chunks := range want {
-		s := stepStatus(b.t, b.run, step)
-		if s.Counts["chunks"] > int64(chunks) || s.Counts["bytes"] > int64(chunks)*b.ChunkBytes {
-			b.t.Errorf("%s counted %v, want at most %d chunks of %d bytes", step, s.Counts, chunks, b.ChunkBytes)
-		} else if s.Counts["chunks"] < int64(chunks) {
-			b.t.Logf("%s counted %d chunks of %d: the rest were lost in a crash (SPEC 16, GO-115)", step, s.Counts["chunks"], chunks)
-		}
-	}
-}
-
 func (b *bench) measure(e *env) {
 	// Kubernetes times have whole seconds; the chunks' times nanoseconds.
 	created := b.run.CreationTimestamp.Time

@@ -80,12 +80,16 @@ func (e *env) pods(r *v1alpha1.StreamRun, labels client.MatchingLabels) []corev1
 	return out
 }
 
-// kill deletes a pod at once, with no grace period, so the agent and the
-// component die together as on a node failure. The controller sees the
-// pod gone and starts a new attempt. It returns the pod's name.
+// kill deletes a pod with a grace period of one second. The agent and the
+// component stop together on SIGTERM, cutting off any write in flight, and
+// the kubelet kills what is left after the second. The pod object goes
+// only when the kubelet has confirmed that its containers stopped, so the
+// controller's new attempt never runs next to the old one (GO-67). A
+// forced deletion, with no grace period, would remove the object while
+// the containers might still run. It returns the pod's name.
 func (e *env) kill(p corev1.Pod) string {
 	e.t.Helper()
-	if err := e.c.Delete(e.t.Context(), &p, client.GracePeriodSeconds(0)); apierrors.IsNotFound(err) {
+	if err := e.c.Delete(e.t.Context(), &p, client.GracePeriodSeconds(1)); apierrors.IsNotFound(err) {
 		return ""
 	} else if err != nil {
 		e.t.Fatalf("deleting %s: %v", p.Name, err)

@@ -20,9 +20,12 @@ limitations under the License.
 package builtin
 
 import (
+	"context"
 	"sync"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"alpheus-dev.org/alpheus/internal/pb/signalpb"
 	"alpheus-dev.org/alpheus/internal/signal"
@@ -32,12 +35,19 @@ import (
 // ones are dropped. Dropping is safe, since agents poll (GO-40).
 const sendBuffer = 256
 
-type topic struct{ run, edge string }
+type topic struct{ scope, run, edge string }
+
+// Authorize decides whether the agent on a connection may subscribe to
+// or send signals of run. It returns the scope the run's topics live in,
+// such as its namespace, so runs of the same name in different scopes
+// never share signals. A non-nil error closes the connection.
+type Authorize func(ctx context.Context, run string) (scope string, err error)
 
 // Hub forwards each signal to the connections subscribed to its run and
 // edge, the sender included.
 type Hub struct {
 	signalpb.UnimplementedHubServer
+	authorize Authorize
 
 	mu     sync.Mutex
 	topics map[topic]map[*hubConn]bool
@@ -47,8 +57,23 @@ type hubConn struct {
 	send chan *signalpb.Signal
 }
 
-// NewHub returns an empty hub.
-func NewHub() *Hub { return &Hub{topics: map[topic]map[*hubConn]bool{}} }
+// NewHub returns an empty hub. A nil authorize lets every connection use
+// every run, in one scope.
+func NewHub(authorize Authorize) *Hub {
+	return &Hub{authorize: authorize, topics: map[topic]map[*hubConn]bool{}}
+}
+
+// topicOf checks that the connection may use run, and returns the topic.
+func (h *Hub) topicOf(ctx context.Context, run, edge string) (topic, error) {
+	if h.authorize == nil {
+		return topic{run: run, edge: edge}, nil
+	}
+	scope, err := h.authorize(ctx, run)
+	if err != nil {
+		return topic{}, status.Error(codes.PermissionDenied, err.Error())
+	}
+	return topic{scope, run, edge}, nil
+}
 
 // Register adds the hub to a gRPC server.
 func (h *Hub) Register(s *grpc.Server) { signalpb.RegisterHubServer(s, h) }
@@ -109,7 +134,10 @@ func (h *Hub) Connect(stream signalpb.Hub_ConnectServer) error {
 		case msg := <-recv:
 			switch m := msg.Message.(type) {
 			case *signalpb.ClientMessage_Subscribe:
-				t := topic{m.Subscribe.Run, m.Subscribe.Edge}
+				t, err := h.topicOf(ctx, m.Subscribe.Run, m.Subscribe.Edge)
+				if err != nil {
+					return err
+				}
 				h.mu.Lock()
 				if h.topics[t] == nil {
 					h.topics[t] = map[*hubConn]bool{}
@@ -120,16 +148,20 @@ func (h *Hub) Connect(stream signalpb.Hub_ConnectServer) error {
 				}
 				h.mu.Unlock()
 			case *signalpb.ClientMessage_Signal:
-				h.forward(m.Signal)
+				t, err := h.topicOf(ctx, m.Signal.Run, m.Signal.Edge)
+				if err != nil {
+					return err
+				}
+				h.forward(t, m.Signal)
 			}
 		}
 	}
 }
 
-func (h *Hub) forward(sig *signalpb.Signal) {
+func (h *Hub) forward(t topic, sig *signalpb.Signal) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for c := range h.topics[topic{sig.Run, sig.Edge}] {
+	for c := range h.topics[t] {
 		select {
 		case c.send <- sig:
 		default:

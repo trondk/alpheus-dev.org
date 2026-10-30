@@ -97,8 +97,8 @@ func (s *inStream) drained() bool {
 // with Agent.mu held.
 func (s *inStream) done() bool { return s.drained() && len(s.open) == 0 }
 
-func (s *inStream) loadAcks(ctx context.Context, st store.Store) error {
-	data, err := store.ReadAll(ctx, st, s.ackKey)
+func (a *Agent) loadAcks(ctx context.Context, s *inStream) error {
+	data, err := store.ReadAll(ctx, a.store, s.ackKey)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		s.acks = chunk.NewAcks()
@@ -106,8 +106,13 @@ func (s *inStream) loadAcks(ctx context.Context, st store.Store) error {
 	case err != nil:
 		return fmt.Errorf("ack file %s: %w", s.ackKey, err)
 	}
-	s.acks, err = chunk.ParseAcks(data)
-	return err
+	if s.acks, err = chunk.ParseAcks(data); err != nil {
+		return err
+	}
+	if s.acks.Epoch > a.cfg.Attempt || s.acks.Closed {
+		return fmt.Errorf("fencing: ack file %s: %w", s.ackKey, chunk.ErrNewerEpoch)
+	}
+	return nil
 }
 
 // ackThrough acks every assigned chunk up to n and writes the ack file if
@@ -122,7 +127,30 @@ func (a *Agent) ackThrough(ctx context.Context, s *inStream, n int64) error {
 	if s.acks.Last() == before {
 		return nil
 	}
-	data, err := s.acks.Marshal()
+	return a.writeAck(ctx, s)
+}
+
+// writeAck writes a stream's ack file with the replica's committed totals,
+// which it commits for a step without outgoing manifests (GO-72), and
+// signals the newest ack.
+func (a *Agent) writeAck(ctx context.Context, s *inStream) error {
+	data, err := store.ReadAll(ctx, a.store, s.ackKey)
+	if err == nil {
+		cur, err := chunk.ParseAcks(data)
+		if err != nil {
+			return fmt.Errorf("ack file %s: %w", s.ackKey, err)
+		}
+		if cur.Epoch > a.cfg.Attempt || cur.Closed {
+			return fmt.Errorf("fencing: ack file %s: %w", s.ackKey, chunk.ErrNewerEpoch)
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("ack file %s: %w", s.ackKey, err)
+	}
+	a.mu.Lock()
+	s.acks.Observed = a.obs.observed()
+	a.mu.Unlock()
+	s.acks.Epoch = a.cfg.Attempt
+	data, err = s.acks.Marshal()
 	if err != nil {
 		return err
 	}
@@ -137,6 +165,17 @@ func (a *Agent) ackThrough(ctx context.Context, s *inStream, n int64) error {
 		ConsumerStep:    a.cfg.Step,
 		ConsumerReplica: a.cfg.Replica,
 	})
+	return nil
+}
+
+// writeAcks writes every input stream's ack file again, to commit the
+// totals of a step without outgoing manifests when it finishes.
+func (a *Agent) writeAcks(ctx context.Context) error {
+	for _, s := range a.streams {
+		if err := a.writeAck(ctx, s); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

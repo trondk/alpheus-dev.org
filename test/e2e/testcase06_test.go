@@ -27,21 +27,25 @@ import (
 )
 
 // TestTestcase06 runs testcase02's fan-out and fan-in, and kills a random
-// pod of the run about every three seconds until it finishes (GO-56). The
+// pod of the run about every three seconds, BENCH_CHAOS_KILLS times
+// (default 12), or until the run finishes (GO-56). The kills stop, so the
+// run can finish: a stateful sink killed every few seconds would start
+// over for ever. The
 // result must still be correct: every chunk once on each of sink's ports,
-// unchanged, with the same checks of acks and streams as testcase02 and
-// no chunks left that were never committed. BENCH_CHAOS_SEED picks the
+// unchanged, with exact counters, the same checks of acks and streams as
+// testcase02, and no chunks left that were never committed. BENCH_CHAOS_SEED picks the
 // pods, so a failure can be run again.
 func TestTestcase06(t *testing.T) {
 	b := newBench(t, "testcase06", map[string]int{"left": 3, "right": 2})
 	seed := setting(t, "BENCH_CHAOS_SEED", int(time.Now().UnixNano()%1_000_000+1))
+	kills := setting(t, "BENCH_CHAOS_KILLS", 12)
 	t.Logf("BENCH_CHAOS_SEED=%d", seed)
 	rnd := rand.New(rand.NewPCG(uint64(seed), 0))
 	e := setup(t)
 	r := e.create(b.Testcase)
 	b.run, b.store = r, e.runStore(r)
 
-	for {
+	for len(b.Kills) < kills {
 		time.Sleep(time.Duration(2000+rnd.IntN(2000)) * time.Millisecond)
 		var now v1alpha1.StreamRun
 		if err := e.c.Get(t.Context(), client.ObjectKeyFromObject(r), &now); err != nil {
@@ -58,9 +62,7 @@ func TestTestcase06(t *testing.T) {
 	}
 
 	b.finish(e, r, b.Chunks, "left", "right")
-	// A crash between the outgoing manifests and the counters loses the
-	// counters of that chunk (SPEC 16, GO-115), so they may be too low.
-	b.countsAtMost(map[string]int{"source": b.Chunks, "left": b.Chunks, "right": b.Chunks, "sink": 2 * b.Chunks})
+	b.counts(map[string]int{"source": b.Chunks, "left": b.Chunks, "right": b.Chunks, "sink": 2 * b.Chunks})
 	b.acks("source", "left")
 	b.acks("source", "right")
 	b.consumed("left", "right")

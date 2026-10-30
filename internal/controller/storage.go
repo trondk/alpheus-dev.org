@@ -95,6 +95,16 @@ func (rc *Reconciler) readStorage(ctx context.Context, st store.Store, r *v1alph
 			if err != nil {
 				return err
 			}
+			committed, err := committedObserved(ctx, st, r, g, s, rep)
+			if err != nil {
+				return err
+			}
+			if committed != nil && (o == nil || committed.Seq > o.Seq) {
+				// The replica stopped after a commit and before its
+				// summary, and has not run again.
+				o = &agent.Observations{Counts: committed.Counts, Errors: committed.Errors,
+					Warnings: committed.Warnings, ErrorsDropped: committed.ErrorsDropped}
+			}
 			if o == nil {
 				continue
 			}
@@ -108,8 +118,21 @@ func (rc *Reconciler) readStorage(ctx context.Context, st store.Store, r *v1alph
 			ss.Warnings += o.Warnings
 			ss.ErrorsDropped += o.ErrorsDropped
 		}
+		if s.FailurePolicy == v1alpha1.FailureContinue {
+			for j := range ss.Replicas {
+				rs := &ss.Replicas[j]
+				if rs.Phase != v1alpha1.StepFailed {
+					continue
+				}
+				n, err := failedChunks(ctx, st, r, g, s, int(rs.Index))
+				if err != nil {
+					return err
+				}
+				rs.FailedChunks = n
+			}
+		}
 		if ss.Errors+ss.Warnings+ss.ErrorsDropped > 0 {
-			ss.ErrorLog = fmt.Sprintf("s3://%s/results/%s/%s/errors/%s/", r.Spec.Storage.Bucket, r.Name, uid, ss.Name)
+			ss.ErrorLog = fmt.Sprintf("s3://%s/results/%s/%s/_errors/%s/", r.Spec.Storage.Bucket, r.Name, uid, ss.Name)
 		}
 
 		found, err := rc.results(ctx, st, r, s)
@@ -213,6 +236,60 @@ func ackCount(ctx context.Context, st store.Store, key string) (int64, error) {
 	return int64(len(a.Acked)), nil
 }
 
+// committedObserved returns a replica's newest committed totals: the copy
+// with the highest seq in its outgoing manifests, its results and its ack
+// files (GO-115).
+func committedObserved(ctx context.Context, st store.Store, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep int) (*chunk.Observed, error) {
+	uid := string(r.UID)
+	var copies []*chunk.Observed
+	for _, e := range g.out[s.Name] {
+		m, err := readManifest(ctx, st, chunk.EdgeStream(uid, edgeName(e), rep))
+		if err != nil {
+			return nil, err
+		}
+		if m != nil {
+			copies = append(copies, m.Observed)
+		}
+	}
+	prefix := chunk.ResultsPrefix(r.Name, uid, s.Name)
+	suffix := "/" + strconv.Itoa(rep) + "/manifest.json"
+	for key, err := range st.List(ctx, prefix) {
+		if err != nil {
+			return nil, err
+		}
+		if !strings.HasSuffix(key, suffix) {
+			continue
+		}
+		data, err := store.ReadAll(ctx, st, key)
+		if err != nil {
+			return nil, err
+		}
+		m, err := chunk.ParseManifest(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		copies = append(copies, m.Observed)
+	}
+	for _, e := range g.in[s.Name] {
+		for p := range replicas(g.steps[e.From]) {
+			key := chunk.EdgeStream(uid, edgeName(e), p).AckKey(s.Name, rep)
+			data, err := store.ReadAll(ctx, st, key)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			a, err := chunk.ParseAcks(data)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			copies = append(copies, a.Observed)
+		}
+	}
+	return chunk.Newest(copies...), nil
+}
+
 func readObservations(ctx context.Context, st store.Store, r *v1alpha1.StreamRun, step string, replica int) (*agent.Observations, error) {
 	key := chunk.ErrorLogPrefix(r.Name, string(r.UID), step, replica) + "manifest.json"
 	data, err := store.ReadAll(ctx, st, key)
@@ -287,6 +364,49 @@ func (rc *Reconciler) closeStreams(ctx context.Context, r *v1alpha1.StreamRun, g
 		}
 	}
 
+	// Close the replica's ack files, so producers stop waiting for it
+	// (GO-35): they list the chunks it committed, and an epoch above its
+	// last attempt fences an agent of it that still runs (GO-68).
+	for _, e := range g.in[s.Name] {
+		for p := range replicas(g.steps[e.From]) {
+			in := chunk.EdgeStream(uid, edgeName(e), p)
+			old, err := readAcks(ctx, st, in.AckKey(s.Name, replica))
+			if err != nil {
+				return 0, err
+			}
+			done := consumed[in.ID]
+			if len(streams) == 0 && old != nil {
+				// Without outgoing streams the ack file is the commit point
+				// (GO-72).
+				done = old.Last()
+			}
+			acks := chunk.NewAcks()
+			for n := int64(1); n <= done; n++ {
+				if chunk.Assign(n, p, replicas(s)) == replica {
+					acks.Ack(n)
+				}
+			}
+			acks.Epoch, acks.Closed = epoch, true
+			if old != nil {
+				acks.Observed = old.Observed
+			}
+			data, err := acks.Marshal()
+			if err != nil {
+				return 0, err
+			}
+			if err := st.Put(ctx, in.AckKey(s.Name, replica), bytes.NewReader(data), int64(len(data))); err != nil {
+				return 0, err
+			}
+		}
+	}
+	return failedChunks(ctx, st, r, g, s, replica)
+}
+
+// failedChunks counts the input chunks assigned to a closed replica that
+// it never committed (GO-97). Producers go on after the replica is closed,
+// so the count grows until they have ended.
+func failedChunks(ctx context.Context, st store.Store, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, replica int) (int64, error) {
+	uid := string(r.UID)
 	var failed int64
 	for _, e := range g.in[s.Name] {
 		for p := range replicas(g.steps[e.From]) {
@@ -295,27 +415,36 @@ func (rc *Reconciler) closeStreams(ctx context.Context, r *v1alpha1.StreamRun, g
 			if err != nil {
 				return 0, err
 			}
-			if m == nil {
+			acks, err := readAcks(ctx, st, in.AckKey(s.Name, replica))
+			if err != nil {
+				return 0, err
+			}
+			if m == nil || acks == nil || !acks.Closed {
 				continue
 			}
-			done := consumed[in.ID]
-			if len(streams) == 0 {
-				// Without outgoing streams the ack file is the commit point
-				// (GO-72).
-				if data, err := store.ReadAll(ctx, st, in.AckKey(s.Name, replica)); err == nil {
-					if a, err := chunk.ParseAcks(data); err == nil {
-						done = a.Last()
-					}
-				}
-			}
-			for n := done + 1; n <= m.Count(); n++ {
-				if chunk.Assign(n, p, replicas(s)) == replica {
+			for n := int64(1); n <= m.Count(); n++ {
+				if chunk.Assign(n, p, replicas(s)) == replica && !acks.Has(n) {
 					failed++
 				}
 			}
 		}
 	}
 	return failed, nil
+}
+
+func readAcks(ctx context.Context, st store.Store, key string) (*chunk.Acks, error) {
+	data, err := store.ReadAll(ctx, st, key)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	a, err := chunk.ParseAcks(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+	return a, nil
 }
 
 // Summary is results/<run>/<uid>/summary.json, written when a run is

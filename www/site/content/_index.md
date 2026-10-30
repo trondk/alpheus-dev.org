@@ -66,4 +66,8 @@ $ helm install alpheus oci://ghcr.io/alpheus-dev/charts/alpheus \
     --namespace alpheus-system --create-namespace
 ```
 
+Images come from GitHub Container Registry unless you set your own
+registry, such as a Zot mirror in an air-gapped cluster, with
+`--set registry=registry.example:5000`.
+
 {{% ifpage "/docs/getting-started/" %}}[Getting started](/docs/getting-started/) walks through a first flow.{{% /ifpage %}}

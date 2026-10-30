@@ -19,16 +19,20 @@ package controller
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"alpheus-dev.org/alpheus/api/v1alpha1"
+	"alpheus-dev.org/alpheus/internal/signal"
 	"alpheus-dev.org/alpheus/internal/signal/builtin"
 )
 
@@ -80,7 +84,7 @@ func (h *Hub) Start(ctx context.Context) error {
 		return fmt.Errorf("signal hub: %w", err)
 	}
 	srv := grpc.NewServer(grpc.Creds(creds))
-	builtin.NewHub().Register(srv)
+	builtin.NewHub(h.authorize).Register(srv)
 	go srv.Serve(lis)
 	logger.Info("signal hub started", "addr", h.Addr)
 
@@ -102,6 +106,45 @@ func (h *Hub) Start(ctx context.Context) error {
 		srv.Stop()
 	}
 	return nil
+}
+
+// authorize lets an agent use only its own run, and only while its attempt
+// is the replica's current one, so an agent of an older attempt that
+// somehow still runs is turned away (GO-41). Topics are per namespace.
+func (h *Hub) authorize(ctx context.Context, run string) (string, error) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return "", errors.New("no peer")
+	}
+	info, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok || len(info.State.PeerCertificates) == 0 {
+		return "", errors.New("no client certificate")
+	}
+	id, err := ParseAgentIdentity(info.State.PeerCertificates[0])
+	if err != nil {
+		return "", err
+	}
+	if want := signal.RunKey(id.Run, id.UID); run != want {
+		return "", fmt.Errorf("the certificate is for run %s, not %s", want, run)
+	}
+	var r v1alpha1.StreamRun
+	if err := h.Client.Get(ctx, client.ObjectKey{Namespace: id.Namespace, Name: id.Run}, &r); err != nil {
+		return "", fmt.Errorf("run %s/%s: %w", id.Namespace, id.Run, err)
+	}
+	if string(r.UID) != id.UID {
+		return "", fmt.Errorf("the certificate is for an earlier run named %s/%s", id.Namespace, id.Run)
+	}
+	for _, s := range r.Status.Steps {
+		if s.Name != id.Step {
+			continue
+		}
+		for _, rs := range s.Replicas {
+			if int(rs.Index) == id.Replica && id.Attempt < rs.Attempt {
+				return "", fmt.Errorf("attempt %d of %s/%d is older than the current attempt %d", id.Attempt, id.Step, id.Replica, rs.Attempt)
+			}
+		}
+	}
+	return id.Namespace, nil
 }
 
 // label sets or removes LabelHub on the controller's own pod.

@@ -177,12 +177,6 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 		rc.finish(ctx, r, g)
 		return ctrl.Result{}, nil
 	}
-	if rc.Options.HubAddress != "" {
-		if err := rc.ensureSignalSecret(ctx, r); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
 	pods, err := rc.pods(ctx, r)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -270,6 +264,11 @@ func (rc *Reconciler) replica(ctx context.Context, r *v1alpha1.StreamRun, g *gra
 			// The attempt's pod existed and is gone, so it is safe to start
 			// another (GO-67).
 			return rc.failedAttempt(ctx, r, g, s, rs, "the pod was deleted")
+		}
+		if rc.Options.HubAddress != "" {
+			if err := rc.ensureSignalSecret(ctx, r, s.Name, int(rs.Index), rs.Attempt); err != nil {
+				return "", err
+			}
 		}
 		p, err := rc.pod(r, g, s, int(rs.Index), rs.Attempt)
 		if err != nil {
@@ -507,11 +506,13 @@ func (rc *Reconciler) store(ctx context.Context, r *v1alpha1.StreamRun) (store.S
 	})
 }
 
-// ensureSignalSecret gives the run a client certificate for the signal hub
-// (GO-41).
-func (rc *Reconciler) ensureSignalSecret(ctx context.Context, r *v1alpha1.StreamRun) error {
+// ensureSignalSecret gives one attempt of a replica its client certificate
+// for the signal hub, naming the attempt, so the hub can turn away older
+// attempts (GO-41).
+func (rc *Reconciler) ensureSignalSecret(ctx context.Context, r *v1alpha1.StreamRun, step string, replica int, attempt int32) error {
+	name := signalSecret(podName(r.Name, step, replica, attempt))
 	var s corev1.Secret
-	err := rc.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: signalSecret(r.Name)}, &s)
+	err := rc.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: name}, &s)
 	if err == nil || !apierrors.IsNotFound(err) {
 		return err
 	}
@@ -519,12 +520,14 @@ func (rc *Reconciler) ensureSignalSecret(ctx context.Context, r *v1alpha1.Stream
 	if err != nil {
 		return err
 	}
-	certPEM, keyPEM, err := ca.Issue(r.Namespace + "/" + r.Name + "/" + string(r.UID))
+	certPEM, keyPEM, err := ca.IssueAgent(AgentIdentity{
+		Namespace: r.Namespace, Run: r.Name, UID: string(r.UID), Step: step, Replica: replica, Attempt: attempt,
+	})
 	if err != nil {
 		return err
 	}
 	s = corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: r.Namespace, Name: signalSecret(r.Name)},
+		ObjectMeta: metav1.ObjectMeta{Namespace: r.Namespace, Name: name},
 		Type:       corev1.SecretTypeTLS,
 		Data: map[string][]byte{
 			"ca.crt":                ca.CertPEM(),

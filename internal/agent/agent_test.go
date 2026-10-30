@@ -18,6 +18,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -236,7 +237,7 @@ func hub(t *testing.T) func() signal.Driver {
 		t.Fatal(err)
 	}
 	s := grpc.NewServer()
-	builtin.NewHub().Register(s)
+	builtin.NewHub(nil).Register(s)
 	go s.Serve(lis)
 	t.Cleanup(s.Stop)
 	return func() signal.Driver {
@@ -282,7 +283,7 @@ func observations(t *testing.T, st store.Store, step string, replica int) Observ
 	t.Helper()
 	data, err := store.ReadAll(context.Background(), st, chunk.ErrorLogPrefix(testRun, testUID, step, replica)+"manifest.json")
 	if errors.Is(err, store.ErrNotFound) {
-		// Lost in a crash after the outgoing manifests (SPEC 16, GO-115).
+		// Nothing was ever counted.
 		return Observations{}
 	}
 	if err != nil {
@@ -296,16 +297,8 @@ func observations(t *testing.T, st store.Store, step string, replica int) Observ
 }
 
 // checkPipeline checks the outcome as testcase03 does (GO-81, GO-84,
-// GO-85), with exact counters.
+// GO-85), with exact counters (GO-115).
 func checkPipeline(t *testing.T, st store.Store, parts, filters int) {
-	t.Helper()
-	checkOutcome(t, st, parts, filters, true)
-}
-
-// checkOutcome is checkPipeline. Without exact, the counters may be too
-// low but never too high: the agent writes them after the outgoing
-// manifests, so a crash in between loses them (SPEC 16, GO-115).
-func checkOutcome(t *testing.T, st store.Store, parts, filters int, exact bool) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -365,14 +358,14 @@ func checkOutcome(t *testing.T, st store.Store, parts, filters int, exact bool) 
 		warnings += o.Warnings
 	}
 	wantIn, wantWarnings := int64(4*parts), int64(2*(parts/10))
-	if exact && (in != wantIn || warnings != wantWarnings) || in > wantIn || warnings > wantWarnings {
+	if in != wantIn || warnings != wantWarnings {
 		t.Errorf("filter counted %d lines in, %d warnings, want %d and %d", in, warnings, wantIn, wantWarnings)
 	}
 	// A restarted source and the stateful sum see chunks again, which
 	// must not be counted again.
 	for step, want := range map[string]int64{"generate": int64(4 * parts), "sum": int64(2 * (parts - parts/10))} {
 		got := observations(t, st, step, 0).Counts["lines"]
-		if exact && got != want || got > want {
+		if got != want {
 			t.Errorf("%s counted %d lines, want %d", step, got, want)
 		}
 	}
@@ -389,8 +382,9 @@ func TestPipelineWithHub(t *testing.T) {
 // generate's output goes to two steps (fan-out), and sum reads from both
 // (fan-in): every chunk reaches each consuming step once, through its own
 // ack files (GO-36), and sum gets EOS only when both inputs have ended.
-func TestFanOutFanIn(t *testing.T) {
-	const parts = 12
+// fanOut is generate -> left (3 replicas) and right (2 replicas) -> sum,
+// with right on its own port.
+func fanOut(parts int) []replica {
 	base := Config{Run: testRun, Namespace: "default", UID: testUID, MaxUnacked: 2, Poll: Duration{50 * time.Millisecond}}
 	gen := base
 	gen.Step = "generate"
@@ -399,10 +393,7 @@ func TestFanOutFanIn(t *testing.T) {
 		{Edge: "generate-right", Output: "default", To: "right", Replicas: 2},
 	}
 	rs := []replica{{gen, generate(parts)}}
-	for _, side := range []struct {
-		name     string
-		replicas int
-	}{{"left", 3}, {"right", 2}} {
+	for _, side := range sides {
 		for r := range side.replicas {
 			f := base
 			f.Step, f.Replica, f.Replicas = side.name, r, side.replicas
@@ -417,13 +408,19 @@ func TestFanOutFanIn(t *testing.T) {
 		{Edge: "left-sum", From: "left", Replicas: 3},
 		{Edge: "right-sum", From: "right", Replicas: 2, Port: "right"},
 	}
-	rs = append(rs, replica{s, sum})
+	return append(rs, replica{s, sum})
+}
 
-	st := store.NewMemory()
-	if err := run(t, st, hub(t), rs...); err != nil {
-		t.Fatal(err)
-	}
+var sides = []struct {
+	name     string
+	replicas int
+}{{"left", 3}, {"right", 2}}
 
+// checkFanOut checks that sum got every chunk once from each side, that
+// each side's replicas acked every chunk once, and that the counters are
+// exact (GO-115).
+func checkFanOut(t *testing.T, st store.Store, parts int) {
+	t.Helper()
 	result := chunk.ResultStream(testRun, testUID, "sum", "result", 0)
 	if m := readManifest(t, st, result); !m.EOS || len(m.Chunks) != 1 {
 		t.Fatalf("result manifest %+v", m)
@@ -440,20 +437,37 @@ func TestFanOutFanIn(t *testing.T) {
 	for i := range want {
 		want[i] = int64(i + 1)
 	}
-	for _, side := range []struct {
-		name     string
-		replicas int
-	}{{"left", 3}, {"right", 2}} {
+	dk := int64(2 * (parts - parts/10))
+	for _, side := range sides {
 		edge := chunk.EdgeStream(testUID, "generate-"+side.name, 0)
 		var all []int64
+		var in int64
 		for r := range side.replicas {
 			all = append(all, readAcks(t, st, edge.AckKey(side.name, r))...)
+			in += observations(t, st, side.name, r).Counts["lines_in"]
 		}
 		slices.Sort(all)
 		if !slices.Equal(all, want) {
 			t.Errorf("%s acked %v, want 1-%d once each", side.name, all, parts)
 		}
+		if in != int64(4*parts) {
+			t.Errorf("%s counted %d lines in, want %d", side.name, in, 4*parts)
+		}
 	}
+	for step, want := range map[string]int64{"generate": int64(4 * parts), "sum": 2 * dk} {
+		if got := observations(t, st, step, 0).Counts["lines"]; got != want {
+			t.Errorf("%s counted %d lines, want %d", step, got, want)
+		}
+	}
+}
+
+func TestFanOutFanIn(t *testing.T) {
+	const parts = 12
+	st := store.NewMemory()
+	if err := run(t, st, hub(t), fanOut(parts)...); err != nil {
+		t.Fatal(err)
+	}
+	checkFanOut(t, st, parts)
 }
 
 // Without signals the agents find everything by polling (GO-40).
@@ -600,5 +614,57 @@ func TestBackpressure(t *testing.T) {
 	m := readManifest(t, st, chunk.EdgeStream(testUID, "generate-filter", 0))
 	if m.Count() != 4 || m.EOS {
 		t.Errorf("%d chunks committed, want 4 (2 replicas x maxUnacked 2)", m.Count())
+	}
+}
+
+// A consumer replica whose ack file the controller closed, after it failed
+// for good with failurePolicy continue, no longer holds the producer back
+// (GO-35, GO-97). With maxUnacked 2 and nobody consuming, replica 0 stops
+// generate at chunk 5, which it could not before, and replica 1 is closed.
+func TestBackpressureClosedReplica(t *testing.T) {
+	st := store.NewMemory()
+	edge := chunk.EdgeStream(testUID, "generate-filter", 0)
+	closed := chunk.NewAcks()
+	closed.Epoch, closed.Closed = 2, true
+	data, _ := closed.Marshal()
+	st.Put(t.Context(), edge.AckKey("filter", 1), bytes.NewReader(data), int64(len(data)))
+
+	gen := pipeline(20, 2)[0]
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	dir, _ := os.MkdirTemp("", "alpheus-agent-")
+	defer os.RemoveAll(dir)
+	gen.cfg.Socket, gen.cfg.Scratch = filepath.Join(dir, "s"), filepath.Join(dir, "scratch")
+	a, err := New(gen.cfg, st, nil, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- a.Run(ctx) }()
+	sdk.RunAgent(ctx, sdk.AgentConfig{Socket: gen.cfg.Socket}, gen.h)
+	if err := <-errc; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("agent: %v, want it still waiting", err)
+	}
+
+	// Chunks 2 and 4 wait for replica 0; chunk 6 would be its third.
+	if m := readManifest(t, st, edge); m.Count() != 5 || m.EOS {
+		t.Errorf("%d chunks committed, want 5", m.Count())
+	}
+}
+
+// An agent whose ack file has a newer epoch, or was closed by the
+// controller, stops instead of writing it (GO-68, GO-97).
+func TestAckFencing(t *testing.T) {
+	st := store.NewMemory()
+	rs := pipeline(2, 1)
+	if err := run(t, st, nil, rs[0]); err != nil {
+		t.Fatal(err)
+	}
+	closed := chunk.NewAcks()
+	closed.Epoch, closed.Closed = 2, true
+	data, _ := closed.Marshal()
+	st.Put(t.Context(), chunk.EdgeStream(testUID, "generate-filter", 0).AckKey("filter", 0), bytes.NewReader(data), int64(len(data)))
+	if err := run(t, st, nil, rs[1]); err == nil || !strings.Contains(err.Error(), "fencing") {
+		t.Errorf("%v, want a fencing error", err)
 	}
 }

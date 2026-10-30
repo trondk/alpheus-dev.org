@@ -18,12 +18,16 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 
+	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
@@ -69,39 +73,95 @@ func (s *crashStore) Delete(ctx context.Context, key string) error {
 // TestCrashAtEveryWrite stops the whole pipeline at each write the agents
 // make in turn, then runs every replica again as a new attempt. Whichever
 // commit step it stopped between (SPEC 7.3 and 7.4), the result must have
-// nothing missing and nothing twice (GO-74): the sum is right and every
-// chunk is acked once. The counters may be too low, but never too high
-// (SPEC 16, GO-115).
+// nothing missing and nothing twice (GO-74): the sum is right, every chunk
+// is acked once, and the counters and the error log are exact (GO-115,
+// GO-118).
 func TestCrashAtEveryWrite(t *testing.T) {
-	const parts, filters = 4, 2
-	count := &crashStore{Store: store.NewMemory()}
-	if err := run(t, count, nil, pipeline(parts, filters)...); err != nil {
-		t.Fatal(err)
-	}
-	total := count.writes
-	t.Logf("%d writes in a run", total)
+	for _, tc := range []struct {
+		name     string
+		pipeline func() []replica
+		check    func(t *testing.T, st store.Store)
+	}{{
+		// Part 10 has no DK lines, so filter logs warnings.
+		"replicas", func() []replica { return pipeline(10, 2) },
+		func(t *testing.T, st store.Store) {
+			checkPipeline(t, st, 10, 2)
+			checkLog(t, st, "filter", 2)
+		},
+	}, {
+		// generate writes each chunk to two manifests, one at a time.
+		"fan-out", func() []replica { return fanOut(4) },
+		func(t *testing.T, st store.Store) { checkFanOut(t, st, 4) },
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			count := &crashStore{Store: store.NewMemory()}
+			if err := run(t, count, nil, tc.pipeline()...); err != nil {
+				t.Fatal(err)
+			}
+			total := count.writes
+			t.Logf("%d writes in a run", total)
 
-	for at := 1; at <= total; at++ {
-		for _, landed := range []bool{false, true} {
-			t.Run(fmt.Sprintf("write %d landed %v", at, landed), func(t *testing.T) {
-				t.Parallel()
-				st := store.NewMemory()
-				crashed := &crashStore{Store: st, at: at, landed: landed}
-				// The writes of concurrent agents come in a different
-				// order each run, so a run can now and then finish
-				// before write number at.
-				if err := run(t, crashed, nil, pipeline(parts, filters)...); err != nil && !errors.Is(err, errStoreCrash) {
-					t.Fatalf("first attempt: %v", err)
+			for at := 1; at <= total; at++ {
+				for _, landed := range []bool{false, true} {
+					t.Run(fmt.Sprintf("write %d landed %v", at, landed), func(t *testing.T) {
+						t.Parallel()
+						st := store.NewMemory()
+						crashed := &crashStore{Store: st, at: at, landed: landed}
+						// The writes of concurrent agents come in a different
+						// order each run, so a run can now and then finish
+						// before write number at.
+						if err := run(t, crashed, nil, tc.pipeline()...); err != nil && !errors.Is(err, errStoreCrash) {
+							t.Fatalf("first attempt: %v", err)
+						}
+						rs := tc.pipeline()
+						for j := range rs {
+							rs[j].cfg.Attempt = 2
+						}
+						if err := run(t, st, nil, rs...); err != nil {
+							t.Fatalf("second attempt: %v", err)
+						}
+						tc.check(t, st)
+					})
 				}
-				rs := pipeline(parts, filters)
-				for j := range rs {
-					rs[j].cfg.Attempt = 2
+			}
+		})
+	}
+}
+
+// checkLog checks that the committed error log segments of a step's
+// replicas hold exactly the entries the summaries count, none twice.
+func checkLog(t *testing.T, st store.Store, step string, replicas int) {
+	t.Helper()
+	seen := map[string]bool{}
+	for r := range replicas {
+		o := observations(t, st, step, r)
+		var lines int64
+		prefix := chunk.ErrorLogPrefix(testRun, testUID, step, r)
+		for key, err := range st.List(context.Background(), prefix) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(key, ".jsonl") {
+				continue
+			}
+			if !slices.Contains(o.Segments, strings.TrimPrefix(key, prefix)) {
+				t.Errorf("%s is not committed", key)
+			}
+			data, _ := store.ReadAll(context.Background(), st, key)
+			for line := range strings.Lines(string(data)) {
+				lines++
+				var e struct{ Chunk, Message string }
+				json.Unmarshal([]byte(line), &e)
+				// Each warning is about one line of one chunk.
+				id := fmt.Sprintf("%d/%s/%s", r, e.Chunk, line)
+				if seen[id] {
+					t.Errorf("logged twice: %s", line)
 				}
-				if err := run(t, st, nil, rs...); err != nil {
-					t.Fatalf("second attempt: %v", err)
-				}
-				checkOutcome(t, st, parts, filters, false)
-			})
+				seen[id] = true
+			}
+		}
+		if lines != o.Errors+o.Warnings {
+			t.Errorf("%s/%d: %d log lines, %d errors and warnings counted", step, r, lines, o.Errors+o.Warnings)
 		}
 	}
 }

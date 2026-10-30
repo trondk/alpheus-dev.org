@@ -36,7 +36,7 @@ func serve(t *testing.T) string {
 		t.Fatal(err)
 	}
 	s := grpc.NewServer()
-	NewHub().Register(s)
+	NewHub(nil).Register(s)
 	go s.Serve(lis)
 	t.Cleanup(s.Stop)
 	return lis.Addr().String()
@@ -106,7 +106,7 @@ func TestReconnects(t *testing.T) {
 	}
 	addr := lis.Addr().String()
 	s := grpc.NewServer()
-	NewHub().Register(s)
+	NewHub(nil).Register(s)
 	go s.Serve(lis)
 
 	c := dial(t, addr)
@@ -120,7 +120,7 @@ func TestReconnects(t *testing.T) {
 		t.Skipf("port taken after restart: %v", err)
 	}
 	s = grpc.NewServer()
-	NewHub().Register(s)
+	NewHub(nil).Register(s)
 	go s.Serve(lis)
 	t.Cleanup(s.Stop)
 

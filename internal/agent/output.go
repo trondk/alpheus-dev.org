@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path"
 	"regexp"
@@ -260,10 +261,20 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 	slices.SortFunc(files, func(x, y *outFile) int { return int(x.seq - y.seq) })
 
 	changed := map[*target]bool{}
-	kept := false
+	// committed says an earlier attempt already committed this commit in
+	// at least one outgoing manifest, and with it the totals including its
+	// report: the agent continues from the newest totals, so adding the
+	// report again would count it twice (GO-115). A step with several
+	// outgoing manifests writes them one at a time, and can stop between.
+	committed := false
 	var srcRef *chunk.Source
 	if src != nil {
 		srcRef = &chunk.Source{Edge: src.s.in.Edge, Replica: src.s.p, N: src.meta.N}
+	}
+	for _, t := range a.targets {
+		if src != nil && !stateful && t.m.IsConsumed(src.s.stream.ID, src.meta.N) || final && t.m.EOS {
+			committed = true
+		}
 	}
 	for i, f := range files {
 		ts, err := a.targetsFor(ctx, f.output)
@@ -280,9 +291,10 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 				return err
 			}
 			if !keep {
+				// A source's chunk an earlier attempt committed (GO-92).
+				committed = committed || a.source()
 				continue
 			}
-			kept = true
 			c.N = t.m.NextN()
 			if err := a.upload(ctx, t.stream.ChunkKey(c.N, c.Ext), f); err != nil {
 				return err
@@ -318,10 +330,52 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 		}
 	}
 
+	chunkName := ""
+	if src != nil {
+		chunkName = fmt.Sprintf("%s/%s/%d", src.s.in.Port, src.s.in.From, src.meta.N)
+	}
+	switch {
+	case committed:
+		r = nil
+		if final {
+			a.mu.Lock()
+			a.obs.held = &report{counts: map[string]int64{}}
+			a.mu.Unlock()
+		}
+	case stateful && !final:
+		// Committed with the OnEOS output, since a restart before that
+		// reads every chunk again (GO-95).
+		a.mu.Lock()
+		a.obs.held.merge(r, chunkName)
+		a.mu.Unlock()
+		r = nil
+	case stateful:
+		a.mu.Lock()
+		held := a.obs.held
+		a.obs.held = &report{counts: map[string]int64{}}
+		a.mu.Unlock()
+		held.merge(r, "")
+		r = held
+	}
+	// The totals go in the same write as consumed (GO-115, GO-118): in
+	// every outgoing manifest, so the newest copy is committed with the
+	// chunk. A step without outgoing manifests commits them in its ack
+	// files instead (GO-72).
+	observedChanged, err := a.prepareObservations(ctx, r, chunkName)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	observed := a.obs.observed()
+	a.mu.Unlock()
 	for _, t := range a.targets {
+		if observedChanged {
+			changed[t] = true
+		}
 		if !changed[t] {
 			continue
 		}
+		t.m.Observed = observed
 		if err := a.writeManifest(ctx, t); err != nil {
 			return err
 		}
@@ -337,30 +391,10 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 		}
 		a.publish(ctx, signal.Signal{Kind: kind, Edge: t.edge, Replica: a.cfg.Replica, N: t.m.Count()})
 	}
-
-	chunkName := ""
-	if src != nil {
-		chunkName = fmt.Sprintf("%s/%s/%d", src.s.in.Port, src.s.in.From, src.meta.N)
+	if len(a.targets) == 0 && final && observedChanged {
+		return a.writeAcks(ctx)
 	}
-	switch {
-	case a.source() && len(files) > 0 && !kept:
-		// An earlier attempt committed this chunk, and what was reported
-		// with it (GO-92, GO-115).
-		return nil
-	case stateful && !final:
-		a.mu.Lock()
-		a.obs.held.merge(r, chunkName)
-		a.mu.Unlock()
-		return nil
-	case stateful:
-		a.mu.Lock()
-		held := a.obs.held
-		a.obs.held = &report{counts: map[string]int64{}}
-		a.mu.Unlock()
-		held.merge(r, "")
-		r = held
-	}
-	return a.writeObservations(ctx, r, chunkName)
+	return nil
 }
 
 // keep decides whether a chunk goes into a target, or is discarded because
@@ -520,6 +554,9 @@ func (a *Agent) waitForConsumers(ctx context.Context, output string) error {
 			if err != nil {
 				return err
 			}
+			if last == closedReplica {
+				continue
+			}
 			unacked := 0
 			for n := last + 1; n < next; n++ {
 				if chunk.Assign(n, a.cfg.Replica, t.replicas) == c {
@@ -550,6 +587,11 @@ func (a *Agent) waitForConsumers(ctx context.Context, output string) error {
 	}
 }
 
+// closedReplica is what ackedBy returns for a consumer replica that
+// failed for good and was closed: it never acks, and nothing waits for it
+// (GO-97).
+const closedReplica = math.MaxInt64
+
 // ackedBy is the last chunk of a target's stream that consumer replica c
 // has acked, read again when the cached value is old or a signal said it
 // changed.
@@ -572,6 +614,9 @@ func (a *Agent) ackedBy(ctx context.Context, t *target, c int) (int64, error) {
 			return 0, fmt.Errorf("%s: %w", path.Base(t.stream.AckKey(t.to, c)), err)
 		}
 		last = acks.Last()
+		if acks.Closed {
+			last = closedReplica
+		}
 	}
 	a.mu.Lock()
 	if t.acks == nil {
@@ -606,7 +651,7 @@ func (a *Agent) publish(ctx context.Context, sig signal.Signal) {
 	if a.sig == nil {
 		return
 	}
-	sig.Run = a.cfg.Run + "/" + a.cfg.UID
+	sig.Run = signal.RunKey(a.cfg.Run, a.cfg.UID)
 	sig.Epoch = a.cfg.Attempt
 	a.sig.Publish(ctx, sig)
 }
@@ -616,7 +661,7 @@ func (a *Agent) subscribe(ctx context.Context) {
 	if a.sig == nil {
 		return
 	}
-	run := a.cfg.Run + "/" + a.cfg.UID
+	run := signal.RunKey(a.cfg.Run, a.cfg.UID)
 	listen := func(edge string, handle func(signal.Signal)) {
 		ch, err := a.sig.Subscribe(ctx, run, edge)
 		if err != nil {

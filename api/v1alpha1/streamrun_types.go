@@ -492,7 +492,7 @@ type StepStatus struct {
 	ErrorsDropped int64 `json:"errorsDropped,omitempty"`
 
 	// ErrorLog is the prefix of the step's error log in the bucket:
-	// results/<run>/<uid>/errors/<step>/ (GO-118).
+	// results/<run>/<uid>/_errors/<step>/ (GO-118).
 	//
 	// +optional
 	ErrorLog string `json:"errorLog,omitempty"`

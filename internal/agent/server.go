@@ -216,6 +216,10 @@ func (s *server) Close(ctx context.Context, req *componentpb.CloseRequest) (*com
 		a.fail(err)
 		return nil, s.rpcErr(err)
 	}
+	if err := a.writeObservations(ctx); err != nil {
+		a.fail(err)
+		return nil, s.rpcErr(err)
+	}
 	a.mu.Lock()
 	a.removeFiles([]*outFile{f})
 	a.mu.Unlock()
@@ -263,6 +267,10 @@ func (s *server) Done(ctx context.Context, req *componentpb.DoneRequest) (*compo
 		return nil, s.rpcErr(err)
 	}
 	if err := a.ackThrough(ctx, c.s, c.meta.N); err != nil {
+		a.fail(err)
+		return nil, s.rpcErr(err)
+	}
+	if err := a.writeObservations(ctx); err != nil {
 		a.fail(err)
 		return nil, s.rpcErr(err)
 	}
@@ -360,6 +368,10 @@ func (s *server) Finish(ctx context.Context, req *componentpb.FinishRequest) (*c
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	if err := a.commit(ctx, nil, files, r, true); err != nil {
+		a.fail(err)
+		return nil, s.rpcErr(err)
+	}
+	if err := a.writeObservations(ctx); err != nil {
 		a.fail(err)
 		return nil, s.rpcErr(err)
 	}

@@ -38,7 +38,7 @@ func ValidUnit(unit string) bool { return unitPattern.MatchString(unit) }
 
 // SegmentSize is how many chunks manifest.json holds before they are sealed
 // into a segment (GO-32). Every sealed segment holds exactly this many.
-const SegmentSize = 10000
+const SegmentSize = 1000
 
 var (
 	// ErrVersion means a manifest, segment or ack file has a format version
@@ -80,6 +80,9 @@ type Manifest struct {
 	// Last is the number of the stream's last chunk, set with EOS. It is 0
 	// for a stream that ended without chunks.
 	Last *int64 `json:"last"`
+	// Observed is the producer replica's committed counters and error
+	// log totals.
+	Observed *Observed `json:"observed,omitempty"`
 }
 
 // Chunk is one committed chunk: a file Alpheus moves but never reads.

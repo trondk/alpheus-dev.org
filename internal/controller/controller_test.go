@@ -20,12 +20,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -305,9 +308,27 @@ func TestPodsAndSuccess(t *testing.T) {
 	if p.Spec.RestartPolicy != corev1.RestartPolicyNever || !metav1.IsControlledBy(p, get(t, r)) {
 		t.Error("restart policy or owner")
 	}
+	// Each attempt has its own certificate, naming it (GO-41).
 	var secret corev1.Secret
-	if err := k8s.Get(t.Context(), client.ObjectKey{Namespace: ns, Name: "sales-signal"}, &secret); err != nil || len(secret.Data["tls.crt"]) == 0 {
-		t.Errorf("signal certificate: %v", err)
+	if err := k8s.Get(t.Context(), client.ObjectKey{Namespace: ns, Name: "sales-filter-1-1-signal"}, &secret); err != nil {
+		t.Fatalf("signal certificate: %v", err)
+	}
+	if v := p.Spec.Volumes; !slices.ContainsFunc(v, func(v corev1.Volume) bool {
+		return v.Secret != nil && v.Secret.SecretName == "sales-filter-1-1-signal"
+	}) {
+		t.Errorf("the pod does not mount its certificate: %+v", v)
+	}
+	block, _ := pem.Decode(secret.Data["tls.crt"])
+	if block == nil {
+		t.Fatal("no certificate in the signal Secret")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := AgentIdentity{Namespace: ns, Run: "sales", UID: string(get(t, r).UID), Step: "filter", Replica: 1, Attempt: 1}
+	if id, err := ParseAgentIdentity(cert); err != nil || id != want {
+		t.Errorf("certificate for %+v (%v), want %+v", id, err, want)
 	}
 
 	for _, name := range []string{"sales-generate-0-1", "sales-filter-0-1", "sales-filter-1-1", "sales-sum-0-1"} {
@@ -366,12 +387,34 @@ func TestFailurePolicyContinue(t *testing.T) {
 	put(t, chunk.EdgeStream(uid, "filter-sum", 0).ManifestKey(), out)
 
 	exit(t, waitPod(t, ns, "sales-filter-0-1"), 1)
+
+	// The controller closes the replica's ack file, so generate no longer
+	// waits for it (GO-35). It lists the chunk the replica committed, with
+	// an epoch above its last attempt (GO-68).
+	ackKey := chunk.EdgeStream(uid, "generate-filter", 0).AckKey("filter", 0)
+	eventually(t, "closed ack file", func() string {
+		data, err := store.ReadAll(t.Context(), mem, ackKey)
+		if err != nil {
+			return err.Error()
+		}
+		acks, _ := chunk.ParseAcks(data)
+		if !acks.Closed || acks.Epoch != 2 || !slices.Equal(acks.Acked, []int64{2}) {
+			return fmt.Sprintf("%+v", acks)
+		}
+		return ""
+	})
+
+	// generate goes on; chunk 6 also goes to the closed replica.
+	gen.Append(chunk.Chunk{N: 5, Ext: "csv", Bytes: 1, SHA256: strings.Repeat("0", 64)})
+	gen.Append(chunk.Chunk{N: 6, Ext: "csv", Bytes: 1, SHA256: strings.Repeat("0", 64)})
+	put(t, chunk.EdgeStream(uid, "generate-filter", 0).ManifestKey(), gen)
+
 	for _, name := range []string{"sales-generate-0-1", "sales-filter-1-1", "sales-sum-0-1"} {
 		exit(t, waitPod(t, ns, name), 0)
 	}
 	got := waitPhase(t, r, v1alpha1.RunPartiallySucceeded)
-	if rs := got.Status.Steps[1].Replicas[0]; rs.Phase != v1alpha1.StepFailed || rs.FailedChunks != 1 {
-		t.Errorf("replica %+v, want failed with 1 failed chunk", rs)
+	if rs := got.Status.Steps[1].Replicas[0]; rs.Phase != v1alpha1.StepFailed || rs.FailedChunks != 2 {
+		t.Errorf("replica %+v, want failed with 2 failed chunks, 4 and 6", rs)
 	}
 	data, err := store.ReadAll(t.Context(), mem, chunk.EdgeStream(uid, "filter-sum", 0).ManifestKey())
 	if err != nil {
@@ -473,12 +516,19 @@ func TestStatusFromStorage(t *testing.T) {
 	gen := chunk.NewManifest("sales", uid, "generate-filter", 0, 1)
 	gen.Append(chunk.Chunk{N: 1, Ext: "csv", Bytes: 100, SHA256: strings.Repeat("0", 64)})
 	gen.End()
+	// generate stopped after its last commit, before its summary: the
+	// committed totals count (GO-115).
+	gen.Observed = &chunk.Observed{Seq: 2, Counts: map[string]int64{"lines": 9}}
 	put(t, chunk.EdgeStream(uid, "generate-filter", 0).ManifestKey(), gen)
 	acks := chunk.NewAcks()
 	acks.Ack(1)
 	put(t, chunk.EdgeStream(uid, "generate-filter", 0).AckKey("filter", 0), acks)
 	res := chunk.NewManifest("sales", uid, "sum.result", 0, 1)
 	res.Append(chunk.Chunk{N: 1, Ext: "txt", Bytes: 7, SHA256: strings.Repeat("0", 64), Counts: map[string]int64{"products": 3}})
+	// sum's summary is newer than its result manifest, which is older.
+	res.Observed = &chunk.Observed{Seq: 1, Counts: map[string]int64{"lines": 1}}
+	sumObs, _ := json.Marshal(agent.Observations{Version: 1, Seq: 4, Counts: map[string]int64{"lines": 18}})
+	mem.Put(t.Context(), chunk.ErrorLogPrefix("sales", uid, "sum", 0)+"manifest.json", bytes.NewReader(sumObs), int64(len(sumObs)))
 	put(t, chunk.ResultStream("sales", uid, "sum", "result", 0).ManifestKey(), res)
 	obs, _ := json.Marshal(agent.Observations{Version: 1, Counts: map[string]int64{"rows_in": 57}, Errors: 2})
 	mem.Put(t.Context(), chunk.ErrorLogPrefix("sales", uid, "filter", 0)+"manifest.json", bytes.NewReader(obs), int64(len(obs)))
@@ -495,12 +545,20 @@ func TestStatusFromStorage(t *testing.T) {
 		if f := st.Steps[1]; f.Counts["rows_in"] != 57 || f.Errors != 2 || f.ErrorLog == "" {
 			return fmt.Sprintf("filter %+v", f)
 		}
+		if g := st.Steps[0]; g.Counts["lines"] != 9 {
+			return fmt.Sprintf("generate %+v", g)
+		}
+		if s := st.Steps[2]; s.Counts["lines"] != 18 {
+			return fmt.Sprintf("sum %+v", s)
+		}
 		return ""
 	})
 }
 
-// The hub accepts agents with a certificate from the signal CA and rejects
-// others (GO-41).
+// The hub accepts an agent with a certificate for the current attempt of a
+// replica of the run it uses, and turns away a client without a
+// certificate, an older attempt, another run and a certificate that names
+// no agent (GO-41).
 func TestHubMTLS(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -512,15 +570,30 @@ func TestHubMTLS(t *testing.T) {
 	defer cancel()
 	go (&Hub{Client: k8s, Addr: addr, DNSNames: []string{"localhost"}, Namespace: "alpheus-system"}).Start(ctx)
 
+	ns := namespace(t)
+	r := testcase03(ns, 1)
+	if err := k8s.Create(t.Context(), r); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "replica status", func() string {
+		if rs, err := replicaOf(get(t, r), "filter", 0); err != nil || rs.Attempt != 1 {
+			return fmt.Sprintf("%+v %v", rs, err)
+		}
+		return ""
+	})
+
 	ca, err := LoadCA(t.Context(), k8s, "alpheus-system")
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPEM, keyPEM, err := ca.Issue("test/run/uid")
-	if err != nil {
-		t.Fatal(err)
+	agentCert := func(id AgentIdentity) []tls.Certificate {
+		certPEM, keyPEM, err := ca.IssueAgent(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, _ := tls.X509KeyPair(certPEM, keyPEM)
+		return []tls.Certificate{cert}
 	}
-	cert, _ := tls.X509KeyPair(certPEM, keyPEM)
 	dial := func(certs []tls.Certificate) *builtin.Client {
 		creds := credentials.NewTLS(&tls.Config{Certificates: certs, RootCAs: ca.Pool(), ServerName: "localhost"})
 		c, err := builtin.Dial(addr, creds, slog.New(slog.DiscardHandler))
@@ -530,10 +603,12 @@ func TestHubMTLS(t *testing.T) {
 		t.Cleanup(func() { c.Close() })
 		return c
 	}
+	current := AgentIdentity{Namespace: ns, Run: r.Name, UID: string(get(t, r).UID), Step: "filter", Replica: 0, Attempt: 1}
 
-	good := dial([]tls.Certificate{cert})
-	ch, _ := good.Subscribe(t.Context(), "run", "a-b")
-	sig := signal.Signal{Kind: signal.Ready, Run: "run", Edge: "a-b", N: 1}
+	run := signal.RunKey(r.Name, current.UID)
+	good := dial(agentCert(current))
+	ch, _ := good.Subscribe(t.Context(), run, "a-b")
+	sig := signal.Signal{Kind: signal.Ready, Run: run, Edge: "a-b", N: 1}
 	eventually(t, "signal over mTLS", func() string {
 		good.Publish(t.Context(), sig)
 		select {
@@ -544,16 +619,46 @@ func TestHubMTLS(t *testing.T) {
 		}
 	})
 
-	bad := dial(nil)
-	badCh, _ := bad.Subscribe(t.Context(), "run", "a-b")
-	for range 10 {
-		good.Publish(t.Context(), sig)
-		select {
-		case <-badCh:
-			t.Fatal("a client without a certificate got a signal")
-		case <-time.After(50 * time.Millisecond):
+	older := current
+	older.Attempt = 0
+	otherRun := current
+	otherRun.Run = "other"
+	plainPEM, plainKey, err := ca.Issue("test/run/uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainCert, _ := tls.X509KeyPair(plainPEM, plainKey)
+	for name, certs := range map[string][]tls.Certificate{
+		"no certificate":         nil,
+		"an older attempt":       agentCert(older),
+		"another run":            agentCert(otherRun),
+		"a certificate for none": {plainCert},
+	} {
+		bad := dial(certs)
+		badCh, _ := bad.Subscribe(t.Context(), run, "a-b")
+		for range 10 {
+			good.Publish(t.Context(), sig)
+			select {
+			case <-badCh:
+				t.Fatalf("a client with %s got a signal", name)
+			case <-time.After(50 * time.Millisecond):
+			}
 		}
 	}
+}
+
+func replicaOf(r *v1alpha1.StreamRun, step string, replica int32) (v1alpha1.ReplicaStatus, error) {
+	for _, s := range r.Status.Steps {
+		if s.Name != step {
+			continue
+		}
+		for _, rs := range s.Replicas {
+			if rs.Index == replica {
+				return rs, nil
+			}
+		}
+	}
+	return v1alpha1.ReplicaStatus{}, fmt.Errorf("no replica %s/%d", step, replica)
 }
 
 // The first LoadCA in a namespace creates the CA and returns it; the next

@@ -38,7 +38,8 @@ limitations under the License.
 // (default 1) in testcase01, LEFT and RIGHT (3 and 2) in testcase02 and
 // testcase06, FILTER (10) in testcase03 and SLOW (2) in testcase05.
 // testcase05 reads BENCH_SLOW_MS (500), the slow step's delay per chunk,
-// and testcase06 BENCH_CHAOS_SEED, which picks the pods it kills.
+// and testcase06 BENCH_CHAOS_SEED, which picks the pods it kills, and
+// BENCH_CHAOS_KILLS (12), how many.
 package e2e
 
 import (

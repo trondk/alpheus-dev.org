@@ -29,6 +29,17 @@ const AcksVersion = 1
 type Acks struct {
 	Version int     `json:"version"`
 	Acked   []int64 `json:"acked"`
+	// Epoch is the attempt of the agent that wrote the file, or above the
+	// replica's last attempt when the controller closed it; an agent of an
+	// older attempt stops at its next write (GO-67, GO-68).
+	Epoch int64 `json:"epoch"`
+	// Closed says the consumer replica failed for good with failurePolicy
+	// continue. The controller closed the file, and the producer no
+	// longer waits for it (GO-35, GO-97).
+	Closed bool `json:"closed,omitempty"`
+	// Observed is the consumer replica's committed counters and error log
+	// totals, for a step without outgoing manifests (GO-72).
+	Observed *Observed `json:"observed,omitempty"`
 }
 
 // NewAcks starts an empty ack file.

@@ -28,6 +28,9 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -142,6 +145,54 @@ func (ca *CA) Pool() *x509.CertPool {
 // Issue makes a certificate: a server certificate for dnsNames, or a client
 // certificate when dnsNames is empty.
 func (ca *CA) Issue(commonName string, dnsNames ...string) (certPEM, keyPEM []byte, err error) {
+	return ca.issue(commonName, dnsNames, nil)
+}
+
+// AgentIdentity is who an agent's certificate is for: one attempt of one
+// replica of a step of a run (GO-41).
+type AgentIdentity struct {
+	Namespace, Run, UID, Step string
+	Replica                   int
+	Attempt                   int32
+}
+
+// agentScheme is the scheme of the URI SAN that holds an AgentIdentity:
+// alpheus://agent/<namespace>/<run>/<uid>/<step>/<replica>/<attempt>.
+const agentScheme = "alpheus"
+
+func (id AgentIdentity) uri() *url.URL {
+	return &url.URL{Scheme: agentScheme, Host: "agent", Path: "/" + strings.Join([]string{
+		id.Namespace, id.Run, id.UID, id.Step, strconv.Itoa(id.Replica), strconv.Itoa(int(id.Attempt)),
+	}, "/")}
+}
+
+// IssueAgent makes a client certificate for one attempt of an agent.
+func (ca *CA) IssueAgent(id AgentIdentity) (certPEM, keyPEM []byte, err error) {
+	// The identity is in the URI; a common name has at most 64 characters.
+	return ca.issue("alpheus-agent", nil, []*url.URL{id.uri()})
+}
+
+// ParseAgentIdentity reads the identity from an agent's certificate.
+func ParseAgentIdentity(cert *x509.Certificate) (AgentIdentity, error) {
+	for _, u := range cert.URIs {
+		if u.Scheme != agentScheme || u.Host != "agent" {
+			continue
+		}
+		parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+		if len(parts) != 6 {
+			break
+		}
+		replica, err1 := strconv.Atoi(parts[4])
+		attempt, err2 := strconv.ParseInt(parts[5], 10, 32)
+		if err1 != nil || err2 != nil {
+			break
+		}
+		return AgentIdentity{Namespace: parts[0], Run: parts[1], UID: parts[2], Step: parts[3], Replica: replica, Attempt: int32(attempt)}, nil
+	}
+	return AgentIdentity{}, errors.New("the certificate names no agent")
+}
+
+func (ca *CA) issue(commonName string, dnsNames []string, uris []*url.URL) (certPEM, keyPEM []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, err
@@ -154,6 +205,7 @@ func (ca *CA) Issue(commonName string, dnsNames ...string) (certPEM, keyPEM []by
 		SerialNumber: serial(),
 		Subject:      pkix.Name{CommonName: commonName},
 		DNSNames:     dnsNames,
+		URIs:         uris,
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(certLifetime),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

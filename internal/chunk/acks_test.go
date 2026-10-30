@@ -43,7 +43,8 @@ func TestAcks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != `{"version":1,"acked":[1,11,21]}` {
+	a.Epoch = 2
+	if data, _ = a.Marshal(); string(data) != `{"version":1,"acked":[1,11,21],"epoch":2}` {
 		t.Errorf("format: %s", data)
 	}
 	got, err := ParseAcks(data)

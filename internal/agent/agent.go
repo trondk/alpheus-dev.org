@@ -236,7 +236,7 @@ func (a *Agent) inDir() string  { return filepath.Join(a.cfg.Scratch, "in") }
 func (a *Agent) outDir() string { return filepath.Join(a.cfg.Scratch, "out") }
 
 // recover loads what earlier attempts committed: the outgoing manifests,
-// the error log and the ack files (SPEC 7.4).
+// the ack files and the error log (SPEC 7.4).
 func (a *Agent) recover(ctx context.Context) error {
 	for _, out := range a.cfg.Outputs {
 		t := &target{
@@ -255,15 +255,12 @@ func (a *Agent) recover(ctx context.Context) error {
 	if err := a.loadResults(ctx); err != nil {
 		return err
 	}
-	if err := a.loadObservations(ctx); err != nil {
-		return err
-	}
 	for _, s := range a.streams {
-		if err := s.loadAcks(ctx, a.store); err != nil {
+		if err := a.loadAcks(ctx, s); err != nil {
 			return err
 		}
 	}
-	return nil
+	return a.loadObservations(ctx)
 }
 
 // startFetching decides where each input stream continues from, now that

@@ -37,7 +37,7 @@ import (
 //     reads all its input again (GO-95, GO-100).
 //
 // Each time the run must succeed with every chunk once and unchanged, and
-// no step may count a chunk twice.
+// with exact counters.
 func TestTestcase04(t *testing.T) {
 	for _, tc := range []struct {
 		step string
@@ -58,10 +58,8 @@ func TestTestcase04(t *testing.T) {
 			b.Kills = append(b.Kills, e.killReplica(r, tc.step, 0))
 
 			b.finish(e, r, b.Chunks, sdk.DefaultPort)
-			// Counting a chunk twice after the restart is a bug. A kill
-			// right after the outgoing manifests loses that chunk's
-			// counters (SPEC 16, GO-115), so they may be too low.
-			b.countsAtMost(map[string]int{"source": b.Chunks, "pass": b.Chunks, "sink": b.Chunks})
+			// Exact, although a chunk was processed twice (GO-115).
+			b.counts(map[string]int{"source": b.Chunks, "pass": b.Chunks, "sink": b.Chunks})
 			for _, step := range []string{"source", "pass", "sink"} {
 				rs, err := replicaStatus(b.run, step, 0)
 				if err != nil {

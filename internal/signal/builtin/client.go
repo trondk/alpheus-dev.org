@@ -89,7 +89,7 @@ func (c *Client) Publish(ctx context.Context, sig signal.Signal) error {
 // Subscribe delivers the signals of one edge of a run until ctx ends.
 func (c *Client) Subscribe(ctx context.Context, run, edge string) (<-chan signal.Signal, error) {
 	ch := make(chan signal.Signal, sendBuffer)
-	t := topic{run, edge}
+	t := topic{run: run, edge: edge}
 	c.mu.Lock()
 	c.subs[t] = append(c.subs[t], ch)
 	c.mu.Unlock()
@@ -197,7 +197,7 @@ func (c *Client) session(ctx context.Context) error {
 func (c *Client) dispatch(sig signal.Signal) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, ch := range c.subs[topic{sig.Run, sig.Edge}] {
+	for _, ch := range c.subs[topic{run: sig.Run, edge: sig.Edge}] {
 		select {
 		case ch <- sig:
 		default:

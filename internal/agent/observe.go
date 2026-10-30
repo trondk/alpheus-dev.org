@@ -23,6 +23,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
+	"strconv"
 	"time"
 
 	"alpheus-dev.org/alpheus/internal/chunk"
@@ -39,9 +41,11 @@ const (
 // ObservationsVersion is the format version of the error log's manifest.
 const ObservationsVersion = 1
 
-// Observations is a replica's committed counters and error log, written to
-// manifest.json under chunk.ErrorLogPrefix. Segments are JSON Lines files
-// of log entries, oldest first.
+// Observations is a summary of a replica's committed counters and error
+// log, written to manifest.json under chunk.ErrorLogPrefix. Segments are
+// JSON Lines files of log entries, oldest first. The totals are committed
+// as chunk.Observed in the outgoing manifests or ack files; this summary is
+// written after them.
 type Observations struct {
 	Version       int              `json:"version"`
 	Run           string           `json:"run"`
@@ -49,6 +53,8 @@ type Observations struct {
 	Step          string           `json:"step"`
 	Replica       int              `json:"replica"`
 	Epoch         int64            `json:"epoch"`
+	// Seq is the seq of the committed totals this summary shows.
+	Seq           int64            `json:"seq"`
 	Segments      []string         `json:"segments"`
 	Counts        map[string]int64 `json:"counts"`
 	Errors        int64            `json:"errors"`
@@ -102,6 +108,8 @@ type observer struct {
 	seq     int64 // last Observe message received
 	err     error // the first invalid report; fails the next commit
 	state   Observations
+	// dirty says the committed totals are newer than the summary.
+	dirty bool
 	// held is what a stateful step reported for chunks it is done with.
 	// It is committed with the OnEOS output, since a restart before that
 	// reads every chunk again (GO-95, GO-115, GO-118).
@@ -178,12 +186,15 @@ func (o *observer) restore(s Observations) {
 	}
 }
 
-// writeObservations commits a report: its log entries as a new segment,
-// then the manifest with the new totals. chunkName names the input chunk
-// in the entries, empty for none.
-func (a *Agent) writeObservations(ctx context.Context, r *report, chunkName string) error {
+// prepareObservations adds a report to the replica's totals before the
+// commit that carries them (GO-115, GO-118): it writes the report's log
+// entries as a new segment, and returns whether the totals changed. The
+// caller then commits the totals, with observed(), in the same write as
+// consumed, and writes the summary with writeObservations. chunkName names
+// the input chunk in the entries, empty for none.
+func (a *Agent) prepareObservations(ctx context.Context, r *report, chunkName string) (bool, error) {
 	if r.empty() {
-		return nil
+		return false, nil
 	}
 	a.mu.Lock()
 	state := a.obs.state
@@ -223,55 +234,128 @@ func (a *Agent) writeObservations(ctx context.Context, r *report, chunkName stri
 		buf.WriteByte('\n')
 	}
 
-	prefix := chunk.ErrorLogPrefix(a.cfg.Run, a.cfg.UID, a.cfg.Step, a.cfg.Replica)
 	if buf.Len() > 0 {
-		name := fmt.Sprintf("log-%06d.jsonl", len(state.Segments)+1)
-		if err := a.store.Put(ctx, prefix+name, bytes.NewReader(buf.Bytes()), int64(buf.Len())); err != nil {
-			return fmt.Errorf("error log: %w", err)
+		name := segmentName(len(state.Segments) + 1)
+		key := chunk.ErrorLogPrefix(a.cfg.Run, a.cfg.UID, a.cfg.Step, a.cfg.Replica) + name
+		if err := a.store.Put(ctx, key, bytes.NewReader(buf.Bytes()), int64(buf.Len())); err != nil {
+			return false, fmt.Errorf("error log: %w", err)
 		}
 		state.Segments = append(state.Segments, name)
 	}
-	data, err := json.Marshal(state)
+	state.Seq++
+	a.mu.Lock()
+	a.obs.state, a.obs.dirty = state, true
+	a.mu.Unlock()
+	return true, nil
+}
+
+func segmentName(i int) string { return fmt.Sprintf("log-%06d.jsonl", i) }
+
+// observed returns the totals to commit. Guarded by Agent.mu.
+func (o *observer) observed() *chunk.Observed {
+	s := o.state
+	return &chunk.Observed{
+		Seq:           s.Seq,
+		Counts:        maps.Clone(s.Counts),
+		Errors:        s.Errors,
+		Warnings:      s.Warnings,
+		ErrorsDropped: s.ErrorsDropped,
+		Segments:      len(s.Segments),
+	}
+}
+
+// writeObservations writes the summary of the committed totals under
+// chunk.ErrorLogPrefix, for the controller and for people. It is only a
+// copy: after a crash before it, the next attempt writes it again from the
+// committed totals.
+func (a *Agent) writeObservations(ctx context.Context) error {
+	a.mu.Lock()
+	if !a.obs.dirty {
+		a.mu.Unlock()
+		return nil
+	}
+	data, err := json.Marshal(a.obs.state)
+	a.obs.dirty = false
+	a.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	if err := a.store.Put(ctx, prefix+"manifest.json", bytes.NewReader(data), int64(len(data))); err != nil {
+	key := chunk.ErrorLogPrefix(a.cfg.Run, a.cfg.UID, a.cfg.Step, a.cfg.Replica) + "manifest.json"
+	if err := a.store.Put(ctx, key, bytes.NewReader(data), int64(len(data))); err != nil {
 		return fmt.Errorf("error log: %w", err)
 	}
-	a.mu.Lock()
-	a.obs.state = state
-	a.mu.Unlock()
 	return nil
 }
 
-// loadObservations reads the committed state of an earlier attempt.
+var logPattern = regexp.MustCompile(`/log-(\d+)\.jsonl$`)
+
+// loadObservations continues from the totals an earlier attempt committed:
+// the copy with the highest seq in the outgoing manifests and ack files. It
+// deletes log segments written after them, and writes the summary again
+// when it is behind.
 func (a *Agent) loadObservations(ctx context.Context) error {
-	key := chunk.ErrorLogPrefix(a.cfg.Run, a.cfg.UID, a.cfg.Step, a.cfg.Replica) + "manifest.json"
-	data, err := store.ReadAll(ctx, a.store, key)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
+	prefix := chunk.ErrorLogPrefix(a.cfg.Run, a.cfg.UID, a.cfg.Step, a.cfg.Replica)
+	var summary *Observations
+	data, err := store.ReadAll(ctx, a.store, prefix+"manifest.json")
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+	case err != nil:
 		return fmt.Errorf("error log: %w", err)
+	default:
+		var s Observations
+		if err := json.Unmarshal(data, &s); err != nil {
+			return fmt.Errorf("error log manifest: %w", err)
+		}
+		if s.Version != ObservationsVersion {
+			return fmt.Errorf("error log manifest: %w: version %d", chunk.ErrVersion, s.Version)
+		}
+		if s.Epoch > a.cfg.Attempt {
+			return fmt.Errorf("error log manifest: %w", chunk.ErrNewerEpoch)
+		}
+		summary = &s
 	}
-	var s Observations
-	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("error log manifest: %w", err)
+
+	var copies []*chunk.Observed
+	for _, t := range a.targets {
+		copies = append(copies, t.m.Observed)
 	}
-	if s.Version != ObservationsVersion {
-		return fmt.Errorf("error log manifest: %w: version %d", chunk.ErrVersion, s.Version)
+	for _, s := range a.streams {
+		copies = append(copies, s.acks.Observed)
 	}
-	if s.Epoch > a.cfg.Attempt {
-		return fmt.Errorf("error log manifest: %w", chunk.ErrNewerEpoch)
-	}
-	if s.Counts == nil {
-		s.Counts = map[string]int64{}
-	}
-	s.Epoch = a.cfg.Attempt
+	committed := chunk.Newest(copies...)
+
 	a.mu.Lock()
-	a.obs.restore(s)
+	state := a.obs.state
 	a.mu.Unlock()
-	return nil
+	if committed != nil {
+		state.Seq = committed.Seq
+		state.Counts = maps.Clone(committed.Counts)
+		if state.Counts == nil {
+			state.Counts = map[string]int64{}
+		}
+		state.Errors, state.Warnings, state.ErrorsDropped = committed.Errors, committed.Warnings, committed.ErrorsDropped
+		state.Segments = []string{}
+		for i := range committed.Segments {
+			state.Segments = append(state.Segments, segmentName(i+1))
+		}
+	}
+	for key, err := range a.store.List(ctx, prefix) {
+		if err != nil {
+			return fmt.Errorf("error log: %w", err)
+		}
+		if m := logPattern.FindStringSubmatch(key); m != nil {
+			if i, _ := strconv.Atoi(m[1]); i > len(state.Segments) {
+				if err := a.store.Delete(ctx, key); err != nil {
+					return fmt.Errorf("error log: %w", err)
+				}
+			}
+		}
+	}
+	a.mu.Lock()
+	a.obs.restore(state)
+	a.obs.dirty = !(summary == nil && committed == nil || summary != nil && summary.Seq == state.Seq)
+	a.mu.Unlock()
+	return a.writeObservations(ctx)
 }
 
 // validFields keeps fields only when they are a JSON object.

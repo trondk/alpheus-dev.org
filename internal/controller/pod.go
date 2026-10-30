@@ -65,8 +65,9 @@ func podName(run, step string, replica int, attempt int32) string {
 	return run[:keep] + "-" + hex.EncodeToString(h[:4]) + suffix
 }
 
-// signalSecret is the Secret with a run's certificate for the signal hub.
-func signalSecret(run string) string { return run + "-signal" }
+// signalSecret is the Secret with a pod's certificate for the signal hub;
+// pod names are unique per attempt (GO-41).
+func signalSecret(pod string) string { return pod + "-signal" }
 
 // agentConfig is what the agent of one replica needs (GO-128).
 func agentConfig(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, replica int, attempt int32) agent.Config {
@@ -143,7 +144,7 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 		)
 		volumes = append(volumes, corev1.Volume{
 			Name:         signalVolume,
-			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: signalSecret(r.Name)}},
+			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: signalSecret(podName(r.Name, s.Name, replica, attempt))}},
 		})
 		agentMounts = append(agentMounts, corev1.VolumeMount{Name: signalVolume, MountPath: signalPath, ReadOnly: true})
 	}
