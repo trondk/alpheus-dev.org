@@ -155,35 +155,12 @@ spec:
                 properties:
                   driver:
                     default: builtin
-                    description: Driver is the signal driver.
+                    description: Driver is the signal driver. builtin is the only
+                      one.
                     enum:
                     - builtin
-                    - stomp
                     type: string
-                  stomp:
-                    description: Stomp configures the stomp driver.
-                    properties:
-                      address:
-                        description: Address of the broker, host:port.
-                        maxLength: 253
-                        minLength: 1
-                        type: string
-                      secretRef:
-                        description: |-
-                          SecretRef names a Secret in the run's namespace with the keys
-                          username and password. Only agents get it.
-                        maxLength: 253
-                        type: string
-                      tls:
-                        description: TLS turns on TLS to the broker.
-                        type: boolean
-                    required:
-                    - address
-                    type: object
                 type: object
-                x-kubernetes-validations:
-                - message: stomp must be set when, and only when, driver is stomp
-                  rule: (has(self.driver) && self.driver == 'stomp') == has(self.stomp)
               steps:
                 description: Steps are the containers of the flow. Names are unique
                   within the run.

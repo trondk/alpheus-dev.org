@@ -70,8 +70,7 @@ alpheus/
 │   ├── chunk/             navngivning, manifest, ack-filer, checksum (findes)
 │   ├── pb/                genereret Go-kode fra proto/ (findes)
 │   ├── signal/            driver-interface (findes)
-│   │   ├── builtin/       gRPC-hub i controlleren og klient i agenten (findes)
-│   │   └── stomp/         STOMP-driver til fx Artemis
+│   │   └── builtin/       gRPC-hub i controlleren og klient i agenten (findes)
 │   ├── store/             S3-klient bag et lille interface (findes)
 │   └── version/
 ├── sdk/                   offentligt komponent-SDK, lokal mode og agent-mode (findes)
@@ -112,8 +111,7 @@ stadig kun foreslået.
 | S3 | `github.com/minio/minio-go/v7` | Apache 2.0 | Godkendt, i brug (v7.4.1) |
 | gRPC | `google.golang.org/grpc`, `google.golang.org/protobuf` | Apache 2.0 / BSD | Godkendt, i brug (v1.83.2 og v1.36.12) |
 | Protobuf-generering | `protoc-gen-go`, `protoc-gen-go-grpc` (kun build, `go tool`), kørt af `buf` | BSD / Apache 2.0 | Godkendt sammen med gRPC (v1.36.12 og v1.6.2) |
-| STOMP | `github.com/go-stomp/stomp/v3` | Apache 2.0 | Foreslået (trin 9) |
-| CLI | `github.com/spf13/cobra` | Apache 2.0 | Foreslået (trin 10) |
+| CLI | `github.com/spf13/cobra` | Apache 2.0 | Foreslået (trin 9) |
 | Metrics | `github.com/prometheus/client_golang` | Apache 2.0 | Foreslået |
 | Logning | `log/slog` fra standardbiblioteket | BSD | I brug |
 | Test | `sigs.k8s.io/controller-runtime/pkg/envtest`, `setup-envtest` (kun build, `go tool`) | Apache 2.0 | Godkendt, i brug (v0.25.2; Kubernetes 1.37.0) |
@@ -436,10 +434,8 @@ type Driver interface {
 |---|---|---|
 | GO-38 | SKAL | `builtin`: agenter holder én bidirektionel gRPC-stream åben til controllerens hub (`proto/signal.proto`). Hub'en videresender signaler pr. run og kant og gemmer intet varigt. |
 | GO-73 | SKAL | Hub'en kører kun i den replica, der er leder (GO-21). Lederen sætter label'en `alpheus-dev.org/signal-hub=active` på sin egen pod og fjerner den, når den mister lederskabet. Hub-Service'en vælger pods med denne label. Ved failover genforbinder agenter med eksponentiel backoff og poller i mellemtiden (GO-40). |
-| GO-39 | SKAL | `stomp`: én destination pr. run og kant (`/queue/alpheus.<run>.<kant>`), persistente beskeder, client-ack. |
-| GO-40 | SKAL | Begge drivere falder tilbage til at polle manifestet (standard hvert 5. sekund), hvis forbindelsen er nede. Korrektheden afhænger aldrig af, at et signal kommer frem. |
+| GO-40 | SKAL | Driveren falder tilbage til at polle manifestet (standard hvert 5. sekund), hvis forbindelsen er nede. Korrektheden afhænger aldrig af, at et signal kommer frem. |
 | GO-41 | SKAL | Forbindelsen mellem agent og hub bruger mTLS med certifikater udstedt af controlleren pr. run. CA'en ligger i Secret'en `alpheus-signal-ca` i `alpheus-system`. Den oprettes af den første leder og læses af alle replicas, så certifikater stadig gælder efter failover. Hub'en afviser forbindelser fra en agent, hvis forsøgsnummer er ældre end trinnets aktuelle (GO-67). |
-| GO-42 | BØR | En fælles testsuite kører mod begge drivere og kontrollerer samme rækkefølge og semantik. |
 
 
 ## 9. CLI (`cmd/alpheus`)
@@ -562,7 +558,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Unit | chunk, manifest, backpressure, graf-validering | `go test`, ingen netværk |
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
-| Driver | `builtin` og `stomp` | fælles suite, Artemis i en container |
+| Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
 | E2E | testcase01 til testcase06, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
@@ -861,8 +857,12 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    committer intet (GO-95, GO-115, GO-118). Tilbage står, at tællere kan
    mangle efter et nedbrud mellem de udgående manifester og tællerne
    (16).
-9. `stomp`-driveren.
-10. CLI, Helm-chart og første udgivelse `v0.1.0`.
+9. CLI, Helm-chart og første udgivelse `v0.1.0`.
+
+En STOMP-driver til en ekstern broker (fx Artemis) var planlagt som
+trin 9 med GO-39 og GO-42, men er taget ud af planen: signaler gør
+kun tingene hurtigere, og `builtin` kræver ingen broker. `driver` i
+CRD'en har derfor kun værdien `builtin`.
 
 
 ## 16. Åbne spørgsmål

@@ -335,52 +335,21 @@ type Storage struct {
 
 // SignalDriver names a signal driver.
 //
-// +kubebuilder:validation:Enum=builtin;stomp
+// +kubebuilder:validation:Enum=builtin
 type SignalDriver string
 
 const (
 	// SignalDriverBuiltin sends signals through the hub in the controller.
 	SignalDriverBuiltin SignalDriver = "builtin"
-	// SignalDriverStomp sends signals through a STOMP broker such as Artemis.
-	SignalDriverStomp SignalDriver = "stomp"
 )
 
-// Signals selects and configures the signal driver.
-//
-// +kubebuilder:validation:XValidation:rule="(has(self.driver) && self.driver == 'stomp') == has(self.stomp)",message="stomp must be set when, and only when, driver is stomp"
+// Signals selects the signal driver.
 type Signals struct {
-	// Driver is the signal driver.
+	// Driver is the signal driver. builtin is the only one.
 	//
 	// +optional
 	// +default="builtin"
 	Driver SignalDriver `json:"driver,omitempty"`
-
-	// Stomp configures the stomp driver.
-	//
-	// +optional
-	Stomp *StompSignals `json:"stomp,omitempty"`
-}
-
-// StompSignals configures the stomp signal driver.
-type StompSignals struct {
-	// Address of the broker, host:port.
-	//
-	// +required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	Address string `json:"address"`
-
-	// SecretRef names a Secret in the run's namespace with the keys
-	// username and password. Only agents get it.
-	//
-	// +optional
-	// +kubebuilder:validation:MaxLength=253
-	SecretRef string `json:"secretRef,omitempty"`
-
-	// TLS turns on TLS to the broker.
-	//
-	// +optional
-	TLS bool `json:"tls,omitempty"`
 }
 
 // RunPhase is the phase of a run.

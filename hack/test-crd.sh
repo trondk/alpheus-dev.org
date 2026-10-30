@@ -53,10 +53,8 @@ create "name must be at most 40 characters" "run name over 40 characters" \
   < <(sample 's/name: sales-dk/name: sales-dk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/')
 create "should match" "storage endpoint without scheme" \
   < <(sample 's|endpoint: http://s3.example:3900|endpoint: s3.example:3900|')
-create "stomp must be set when, and only when, driver is stomp" "stomp driver without stomp settings" \
+create "Unsupported value" "stomp signal driver, which was removed" \
   < <(sample '$a\  signals: {driver: stomp}')
-create ok "stomp driver with stomp settings" \
-  < <(sample '$a\  signals: {driver: stomp, stomp: {address: "artemis:61613"}}')
 create "Unsupported value" "unknown signal driver" \
   < <(sample '$a\  signals: {driver: kafka}')
 create "should be greater than or equal to 1" "maxUnacked 0" \

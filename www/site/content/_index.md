@@ -30,7 +30,7 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
 
 ## A minimal flow
 
-A run is one `StreamRun` resource. {{< planned >}}A first flow runs end to end on a test cluster, but no images are published yet. The `alpheus` CLI comes later; until then `kubectl apply -f flow.yaml` does the same.{{< /planned >}}
+A run is one `StreamRun` resource. {{< planned >}}Six test flows run end to end on a test cluster, including restarts and pods killed at random, but no images are published yet. The `alpheus` CLI comes later; until then `kubectl apply -f flow.yaml` does the same.{{< /planned >}}
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1

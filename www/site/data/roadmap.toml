@@ -28,15 +28,11 @@
 
 [[steps]]
   text = "Fan-out, fan-in and replicas, end to end."
-  done = false
+  done = true
 
 [[steps]]
   text = "Restarts, backpressure and chaos tests on the cluster."
-  done = false
-
-[[steps]]
-  text = "A STOMP signal driver, for brokers such as Artemis."
-  done = false
+  done = true
 
 [[steps]]
   text = "The `alpheus` CLI, the Helm chart and the first release, `v0.1.0`."
