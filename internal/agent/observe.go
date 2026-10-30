@@ -47,12 +47,12 @@ const ObservationsVersion = 1
 // as chunk.Observed in the outgoing manifests or ack files; this summary is
 // written after them.
 type Observations struct {
-	Version       int              `json:"version"`
-	Run           string           `json:"run"`
-	UID           string           `json:"uid"`
-	Step          string           `json:"step"`
-	Replica       int              `json:"replica"`
-	Epoch         int64            `json:"epoch"`
+	Version int    `json:"version"`
+	Run     string `json:"run"`
+	UID     string `json:"uid"`
+	Step    string `json:"step"`
+	Replica int    `json:"replica"`
+	Epoch   int64  `json:"epoch"`
 	// Seq is the seq of the committed totals this summary shows.
 	Seq           int64            `json:"seq"`
 	Segments      []string         `json:"segments"`

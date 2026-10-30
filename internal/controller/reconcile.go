@@ -46,6 +46,14 @@ import (
 // disappears (GO-20).
 const Finalizer = "alpheus-dev.org/cleanup"
 
+// secretFinalizer keeps a run's storage Secret until the run's prefix is
+// deleted: deleting a namespace deletes the Secret and the run together,
+// and the cleanup needs the keys (GO-20). It is one per run, so runs that
+// share a Secret each hold it.
+func secretFinalizer(r *v1alpha1.StreamRun) string {
+	return "alpheus-dev.org/storage-" + string(r.UID)
+}
+
 // agentRestartLimit is how often the agent sidecar may restart in place
 // before the attempt counts as failed.
 const agentRestartLimit = 3
@@ -77,8 +85,11 @@ type Options struct {
 // Reconciler reconciles StreamRuns.
 type Reconciler struct {
 	client.Client
-	Scheme  *runtime.Scheme
-	Options Options
+	// APIReader reads from the API server instead of the cache, to confirm
+	// that a pod is gone (GO-67). Nil uses Client.
+	APIReader client.Reader
+	Scheme    *runtime.Scheme
+	Options   Options
 
 	caOnce sync.Mutex
 	ca     *CA
@@ -88,7 +99,7 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=alpheus-dev.org,resources=streamruns/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=alpheus-dev.org,resources=streamruns/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete;deletecollection;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -121,6 +132,9 @@ func (rc *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Res
 		if err := rc.Patch(ctx, &r, client.MergeFromWithOptions(orig, client.MergeFromWithOptimisticLock{})); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+	if err := rc.holdSecret(ctx, &r); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	before := r.DeepCopy()
@@ -170,9 +184,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 	initStatus(r)
 
 	if r.Spec.Cancel {
-		if err := rc.deletePods(ctx, r); err != nil {
-			return ctrl.Result{}, err
-		}
+		// afterFinish deletes the pods once the phase is written.
 		st.Phase, st.Message = v1alpha1.RunCancelled, "cancelled"
 		rc.finish(ctx, r, g)
 		return ctrl.Result{}, nil
@@ -214,9 +226,9 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 	st.StepsFinished = fmt.Sprintf("%d/%d", finished, len(st.Steps))
 	switch {
 	case stop != "":
-		if err := rc.deletePods(ctx, r); err != nil {
-			return ctrl.Result{}, err
-		}
+		// The pods go in afterFinish, once the phase is written: deleted
+		// now, a status write that conflicts would leave the last attempt
+		// looking deleted instead of failed.
 		st.Phase, st.Message = v1alpha1.RunFailed, stop
 		rc.finish(ctx, r, g)
 		return ctrl.Result{}, nil
@@ -261,6 +273,12 @@ func (rc *Reconciler) replica(ctx context.Context, r *v1alpha1.StreamRun, g *gra
 	pod := pods[name]
 	if pod == nil {
 		if rs.Pod == name {
+			// The cache may not have a pod just created yet; only the API
+			// server can confirm that it is gone.
+			gone, err := rc.podGone(ctx, r.Namespace, name)
+			if err != nil || !gone {
+				return "", err
+			}
 			// The attempt's pod existed and is gone, so it is safe to start
 			// another (GO-67).
 			return rc.failedAttempt(ctx, r, g, s, rs, "the pod was deleted")
@@ -436,6 +454,18 @@ func (rc *Reconciler) afterFinish(ctx context.Context, r *v1alpha1.StreamRun) (c
 	if r.Status.FinishedAt == nil {
 		return ctrl.Result{}, nil
 	}
+	if r.Status.Phase == v1alpha1.RunFailed || r.Status.Phase == v1alpha1.RunCancelled {
+		// Stop what still runs.
+		pods, err := rc.pods(ctx, r)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if len(pods) > 0 {
+			if err := rc.deletePods(ctx, r); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	}
 	now := time.Now()
 	var next time.Duration
 	if ttl := r.Spec.TTLAfterFinished; ttl != nil {
@@ -468,12 +498,61 @@ func (rc *Reconciler) finalize(ctx context.Context, r *v1alpha1.StreamRun) error
 	if !controllerutil.ContainsFinalizer(r, Finalizer) {
 		return nil
 	}
-	if err := rc.deletePrefix(ctx, r, chunk.RunPrefix(string(r.UID))); err != nil {
+	var secret corev1.Secret
+	err := rc.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: r.Spec.Storage.SecretRef}, &secret)
+	switch {
+	case apierrors.IsNotFound(err):
+		// Only for a Secret that never existed or that went before the
+		// run held it: without keys, the data cannot be deleted.
+		log.FromContext(ctx).Info("the storage Secret is gone; the run's data is left in the bucket",
+			"secret", r.Spec.Storage.SecretRef, "prefix", chunk.RunPrefix(string(r.UID)))
+	case err != nil:
 		return err
+	default:
+		if err := rc.deletePrefix(ctx, r, chunk.RunPrefix(string(r.UID))); err != nil {
+			return err
+		}
+		before := secret.DeepCopy()
+		if controllerutil.RemoveFinalizer(&secret, secretFinalizer(r)) {
+			if err := rc.Patch(ctx, &secret, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+				return err
+			}
+		}
 	}
 	before := r.DeepCopy()
 	controllerutil.RemoveFinalizer(r, Finalizer)
 	return rc.Patch(ctx, r, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+}
+
+// podGone asks the API server whether a pod no longer exists.
+func (rc *Reconciler) podGone(ctx context.Context, namespace, name string) (bool, error) {
+	reader := rc.APIReader
+	if reader == nil {
+		reader = rc.Client
+	}
+	err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &corev1.Pod{})
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	return false, err
+}
+
+// holdSecret puts the run's finalizer on its storage Secret. A missing
+// Secret is not an error here; the run fails when it needs the keys.
+func (rc *Reconciler) holdSecret(ctx context.Context, r *v1alpha1.StreamRun) error {
+	var secret corev1.Secret
+	err := rc.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: r.Spec.Storage.SecretRef}, &secret)
+	if apierrors.IsNotFound(err) || err == nil && !secret.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	before := secret.DeepCopy()
+	if !controllerutil.AddFinalizer(&secret, secretFinalizer(r)) {
+		return nil
+	}
+	return rc.Patch(ctx, &secret, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
 }
 
 func (rc *Reconciler) deletePrefix(ctx context.Context, r *v1alpha1.StreamRun, prefix string) error {

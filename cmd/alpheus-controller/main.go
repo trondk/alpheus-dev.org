@@ -86,8 +86,9 @@ func run(agentImage string, allowTags bool, hubAddr, hubAddress, storageCA, metr
 		return err
 	}
 	rc := &controller.Reconciler{
-		Client: mgr.GetClient(),
-		Scheme: scheme,
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    scheme,
 		Options: controller.Options{
 			AgentImage:    agentImage,
 			AllowTags:     allowTags,

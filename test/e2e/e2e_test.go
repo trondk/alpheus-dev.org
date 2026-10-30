@@ -54,6 +54,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/rand"
@@ -111,7 +112,22 @@ func setup(t *testing.T) *env {
 			t.Logf("keeping namespace %s", e.ns)
 			return
 		}
-		c.Delete(context.Background(), ns)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		c.Delete(ctx, ns)
+		// The run's finalizers must let the namespace go, also although
+		// its storage Secret is deleted with it (GO-20).
+		for {
+			if err := c.Get(ctx, client.ObjectKeyFromObject(ns), &corev1.Namespace{}); apierrors.IsNotFound(err) {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				t.Errorf("namespace %s was not deleted within 3 minutes", e.ns)
+				return
+			case <-time.After(time.Second):
+			}
+		}
 	})
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "alpheus-s3", Namespace: e.ns},

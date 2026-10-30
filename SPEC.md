@@ -237,7 +237,7 @@ idempotent: samme input giver samme ønskede tilstand.
 | ID | Niveau | Krav |
 |---|---|---|
 | GO-19 | SKAL | Alle objekter, et run opretter, har `ownerReferences` til StreamRun-objektet. |
-| GO-20 | SKAL | En finalizer (`alpheus-dev.org/cleanup`) sikrer, at runnets S3-prefix slettes, før objektet forsvinder. |
+| GO-20 | SKAL | En finalizer (`alpheus-dev.org/cleanup`) sikrer, at runnets S3-prefix slettes, før objektet forsvinder. Oprydningen kræver nøglerne, og når et namespace slettes, slettes Secret'en med dem samtidig. Derfor sætter controlleren også en finalizer pr. run (`alpheus-dev.org/storage-<uid>`) på storage-Secret'en og fjerner den først, når prefixet er slettet; runs, der deler Secret'en, holder den hver især. Findes Secret'en ikke, fx fordi den aldrig fandtes, logger controlleren, at data bliver liggende, og fjerner runnets finalizer, så objektet ikke hænger. |
 | GO-21 | SKAL | Controlleren bruger leader election, så to replicas kan køre samtidig. |
 | GO-22 | SKAL | Statusopdateringer bruger `Patch` med optimistisk låsning og rate-begrænses (højst én pr. sekund pr. run). |
 | GO-23 | BØR | En validating webhook afviser ugyldige grafer, før objektet gemmes. Uden webhook sker samme validering i reconcile-løkken. |
@@ -903,8 +903,18 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    stoppede mellem to af dem, så en rapport, et udgående manifest
    allerede har committet, lægges ikke til igen; og hub'en afviste alle
    agenters signaler, fordi den forventede runnets navn uden UID, så
-   agenterne kun pollede. Kontrollen før hver skrivning af en ack-fil
-   (fencing, GO-97) koster ca. 10–15 % gennemløb på testklyngen.
+   agenterne kun pollede. På en ny testklynge giver testcase01 stadig
+   ca. 41 MB/s og en latens på ca. 250 ms (p50). Runs, der ikke blev
+   ryddet op, gjorde Garage langsommere i løbet af dagen: namespacet
+   hang, fordi storage-Secret'en blev slettet før runnet, så
+   oprydningen manglede nøglerne. Controlleren holder nu Secret'en med
+   en finalizer, til data er slettet (GO-20), og e2e-testene fejler,
+   hvis et namespace ikke forsvinder inden for 3 minutter. Controlleren
+   slettede også et stoppet runs pods, før dets status var skrevet; gik
+   skrivningen i konflikt, så det sidste forsøg ud til at være slettet i
+   stedet for fejlet. Pods slettes nu først, når fasen er skrevet, og en
+   pod, der mangler i cachen, bekræftes slettet hos API-serveren, før den
+   tæller som et fejlet forsøg (GO-67).
 9. CLI, Helm-chart og første udgivelse `v0.1.0`. Komponenter i andre
    sprog end Go bruger gRPC-kontrakten (`proto/component.proto`) og den
    dokumenterede lokale mode; der er intet Python-SDK i `v0.1.0`. En
@@ -924,5 +934,6 @@ Ingen lige nu. Afgjort 2026-10-30: GitHub Container Registry til
 udgivelser (14), Python via gRPC-kontrakten og en referencekomponent
 (15, trin 9), manifest-segmenter for hver 1.000 chunks (GO-32), egen
 bucket til resultater (GO-129), tællere i commit'et (GO-115), lukning af
-fejlede replikaers ack-filer (GO-97) og fejlloggen under `_errors/`
+fejlede replikaers ack-filer (GO-97), en finalizer på storage-Secret'en
+(GO-20) og fejlloggen under `_errors/`
 (GO-118).

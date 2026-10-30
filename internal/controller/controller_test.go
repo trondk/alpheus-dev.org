@@ -117,8 +117,9 @@ func runTests(m *testing.M, cfg *rest.Config) (int, error) {
 		return 0, err
 	}
 	rc := &Reconciler{
-		Client: mgr.GetClient(),
-		Scheme: scheme,
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    scheme,
 		Options: Options{
 			AgentImage: agentImage,
 			HubAddress: "alpheus-signal-hub.alpheus-system.svc:7070",
@@ -475,12 +476,20 @@ func TestCancel(t *testing.T) {
 }
 
 // Deleting a run deletes runs/<uid>/ but keeps its results (GO-20, GO-78).
+// Deleting a namespace deletes the storage Secret and the run together.
+// The run's finalizer on the Secret keeps the keys until runs/<uid>/ is
+// deleted; then both go, and the result stays (GO-20, GO-78).
 func TestFinalizer(t *testing.T) {
 	ns := namespace(t)
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "alpheus-s3"}}
+	if err := k8s.Create(t.Context(), secret); err != nil {
+		t.Fatal(err)
+	}
 	r := create(t, testcase03(ns, 1))
-	eventually(t, "finalizer", func() string {
-		if len(get(t, r).Finalizers) == 0 {
-			return "none"
+	eventually(t, "finalizers", func() string {
+		k8s.Get(t.Context(), client.ObjectKeyFromObject(secret), secret)
+		if len(get(t, r).Finalizers) == 0 || !slices.Contains(secret.Finalizers, secretFinalizer(get(t, r))) {
+			return fmt.Sprintf("run %v, secret %v", get(t, r).Finalizers, secret.Finalizers)
 		}
 		return ""
 	})
@@ -489,13 +498,23 @@ func TestFinalizer(t *testing.T) {
 	for _, key := range []string{runKey, resultKey} {
 		mem.Put(t.Context(), key, strings.NewReader("x"), 1)
 	}
+
+	// The Secret first, as a namespace deletion may do; it stays.
+	if err := k8s.Delete(t.Context(), secret); err != nil {
+		t.Fatal(err)
+	}
+	if err := k8s.Get(t.Context(), client.ObjectKeyFromObject(secret), secret); err != nil {
+		t.Fatalf("the Secret went before the run's data: %v", err)
+	}
 	if err := k8s.Delete(t.Context(), get(t, r)); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "run deleted", func() string {
-		err := k8s.Get(t.Context(), client.ObjectKeyFromObject(r), &v1alpha1.StreamRun{})
-		if !apierrors.IsNotFound(err) {
-			return fmt.Sprint(err)
+	eventually(t, "run and Secret deleted", func() string {
+		if err := k8s.Get(t.Context(), client.ObjectKeyFromObject(r), &v1alpha1.StreamRun{}); !apierrors.IsNotFound(err) {
+			return fmt.Sprint("run: ", err)
+		}
+		if err := k8s.Get(t.Context(), client.ObjectKeyFromObject(secret), &corev1.Secret{}); !apierrors.IsNotFound(err) {
+			return fmt.Sprint("secret: ", err)
 		}
 		return ""
 	})
@@ -504,6 +523,33 @@ func TestFinalizer(t *testing.T) {
 	}
 	if _, err := store.ReadAll(t.Context(), mem, resultKey); err != nil {
 		t.Errorf("the result was deleted: %v", err)
+	}
+}
+
+// A run whose storage Secret never existed is still deleted, leaving its
+// data, instead of hanging.
+func TestFinalizerWithoutSecret(t *testing.T) {
+	ns := namespace(t)
+	r := create(t, testcase03(ns, 1))
+	eventually(t, "finalizer", func() string {
+		if len(get(t, r).Finalizers) == 0 {
+			return "none"
+		}
+		return ""
+	})
+	key := "runs/" + string(get(t, r).UID) + "/generate-filter/0/part-000001.csv"
+	mem.Put(t.Context(), key, strings.NewReader("x"), 1)
+	if err := k8s.Delete(t.Context(), get(t, r)); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "run deleted", func() string {
+		if err := k8s.Get(t.Context(), client.ObjectKeyFromObject(r), &v1alpha1.StreamRun{}); !apierrors.IsNotFound(err) {
+			return fmt.Sprint(err)
+		}
+		return ""
+	})
+	if _, err := store.ReadAll(t.Context(), mem, key); err != nil {
+		t.Errorf("data deleted without keys: %v", err)
 	}
 }
 
