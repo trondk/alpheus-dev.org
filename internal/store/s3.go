@@ -114,17 +114,14 @@ func (s *S3) Put(ctx context.Context, key string, r io.Reader, size int64) error
 }
 
 func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
-	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
+	// One GET whose body is the object. Client.GetObject would make a
+	// second request with If-Match on the first one's ETag, which fails
+	// when a manifest is overwritten in between.
+	body, _, _, err := minio.Core{Client: s.client}.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get %s: %w", key, mapErr(err))
 	}
-	// GetObject is lazy; Stat makes the request, so a missing object is
-	// reported here and not on the first Read.
-	if _, err := obj.Stat(); err != nil {
-		obj.Close()
-		return nil, fmt.Errorf("get %s: %w", key, mapErr(err))
-	}
-	return obj, nil
+	return body, nil
 }
 
 func (s *S3) Delete(ctx context.Context, key string) error {
