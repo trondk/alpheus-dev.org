@@ -17,6 +17,8 @@ Hugo is pinned to v0.168.0 (WWW-21).
 | Public Go packages (WWW-17) | `data/gopackages.toml`, generated in CI |
 | Front page text | `content/_index.md` |
 | Text for each phase | `data/phases.toml` |
+| Roadmap under Status on the front page | `data/roadmap.toml`, after section 15 of the main `SPEC.md` |
+| Development and testing page | `content/development.md` |
 | Theme: layouts, CSS, fonts, river | `themes/alpheus/` |
 
 Fonts are under the SIL Open Font License; the license texts are next to

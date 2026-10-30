@@ -46,6 +46,7 @@ saglig, konkret og uden salgssprog.
   components/             Skriv en komponent med SDK'et
   operations/             Drift på Kubernetes og Talos, metrics, sikkerhed
   protocol/               Chunk-protokollen i detaljer
+/development/             Udvikling og test: byg, tests og testklyngen i Vagrant
 /about/                   Om projektet: historien, governance, licens, kontakt
 /security/                Sådan rapporteres sårbarheder (genereres fra SECURITY.md)
 /releases/                Udgivelser og release notes (genereres fra udgivelserne på Forgejo)
@@ -73,12 +74,17 @@ I rækkefølge, i én spalte:
    - Every step runs at the same time; data moves as chunks in S3, in any file format.
    - No message broker for data, only Kubernetes and an S3 endpoint.
    - The same component runs in batch and in streaming.
-4. **Et minimalt eksempel**: en StreamRun på 15–20 linjer og
+4. **Hvordan det virker**, som en almindelig liste: controlleren kører
+   trinnene som pods, komponenten læser og skriver filer, agenten
+   flytter dem og committer dem i manifester, signaler går gennem hub'en
+   med mTLS, og et trin genstarter fra sine manifester.
+5. **Et minimalt eksempel**: en StreamRun på 15–20 linjer og
    `alpheus run -f flow.yaml`.
-5. **Installation** i én kommando (Helm) og et link til Kom i gang.
-6. **Status**: projektets aktuelle fase (se WWW-8), med link til roadmap
-   og release notes.
-7. **Fod**: licens, governance, sikkerhed, repo, kontakt.
+6. **Installation** i én kommando (Helm) og et link til Kom i gang.
+7. **Status**: projektets aktuelle fase (se WWW-8), roadmap'en med de
+   færdige trin og det næste (fra `data/roadmap.toml`, efter afsnit 15 i
+   hovedrepo'ets `SPEC.md`) og et link til release notes.
+8. **Fod**: licens, governance, sikkerhed, repo, kontakt.
 
 | ID | Niveau | Krav |
 |---|---|---|

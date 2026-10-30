@@ -10,5 +10,18 @@
 
 <h2 id="status">Status</h2>
 <p><strong>{{ $phase.name | strings.FirstUpper }}.</strong> {{ $phase.long }}</p>
-<p>See the <a href="{{ site.Params.repo }}#roadmap">roadmap</a> and the <a href="{{ "releases/" | relURL }}">release notes</a>.</p>
+
+<h3 id="roadmap">Roadmap</h3>
+<ol class="roadmap">
+{{- $next := true }}
+{{- range hugo.Data.roadmap.steps }}
+  <li>{{ .text | markdownify }}
+  {{- if .done }} <em>Done.</em>
+  {{- else if $next }} <strong>Next.</strong>{{ $next = false }}
+  {{- end }}</li>
+{{- end }}
+</ol>
+{{- if partial "page-exists.html" "/releases/" }}
+<p>See the <a href="{{ "releases/" | relURL }}">release notes</a>.</p>
+{{- end }}
 {{ end }}

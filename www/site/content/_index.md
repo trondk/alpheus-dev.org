@@ -8,7 +8,23 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
 
 - Every step runs at the same time; data moves as chunks in S3, in any file format.
 - No message broker for data, only Kubernetes and an S3 endpoint.
-- The same component runs in batch and in streaming.
+- The same component runs in batch and in streaming. {{< planned >}}Batch mode is planned; today components run in streaming only.{{< /planned >}}
+
+## How it works
+
+- The controller runs each step of a `StreamRun` as pods: one per
+  replica, with the step's component as the only container next to an
+  agent.
+- The component reads its input as files and writes its output as files,
+  in a folder it shares with the agent. It never talks to S3.
+- The agent moves the files: it fetches input chunks from S3, uploads
+  output chunks, and commits them in a manifest for each stream. A chunk
+  exists once the manifest lists it.
+- Agents tell each other that a chunk is ready through a small hub in
+  the controller, over mutual TLS. A lost signal only delays things:
+  agents also read the manifests.
+- A step that crashes starts again from its manifests, without losing
+  or repeating output.
 
 ## A minimal flow
 
@@ -48,4 +64,4 @@ $ helm install alpheus oci://ghcr.io/alpheus-dev/charts/alpheus \
     --namespace alpheus-system --create-namespace
 ```
 
-[Getting started](/docs/getting-started/) walks through a first flow.
+{{% ifpage "/docs/getting-started/" %}}[Getting started](/docs/getting-started/) walks through a first flow.{{% /ifpage %}}

@@ -31,4 +31,4 @@ alpheus-dev.org. Their own privacy terms apply there.
 If the project ever needs visitor numbers, it will use a self-hosted,
 cookie-free solution, and this page will be updated before that happens.
 
-Questions about this page: see [Contact](/about/#contact).
+{{% ifpage "/about/" %}}Questions about this page: see [Contact](/about/#contact).{{% /ifpage %}}

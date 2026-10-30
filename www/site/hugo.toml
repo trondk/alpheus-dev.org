@@ -37,6 +37,10 @@ enableRobotsTXT = true
     url = "/docs/getting-started/"
     weight = 20
   [[menus.main]]
+    name = "Development"
+    url = "/development/"
+    weight = 25
+  [[menus.main]]
     name = "About"
     url = "/about/"
     weight = 30

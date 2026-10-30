@@ -137,7 +137,7 @@ repository is the only copy, and issues can be opened here.
 2. API types and generated CRD. *Done.*
 3. Chunk and manifest handling against an S3-compatible store. *Done.*
 4. Component SDK with a local test mode. *Done.*
-5. Agent, then controller.
+5. Agent, then controller. *Done.*
 6. End-to-end tests on Talos, including restarts and backpressure.
 7. First release, `v0.1.0`.
 
