@@ -65,7 +65,7 @@ func TestParseAcksRejects(t *testing.T) {
 	}
 }
 
-// The check testcase03-replicas makes on the filter replicas' ack files
+// The check testcase03 makes on the filter replicas' ack files
 // (GO-84): disjoint, together exactly 1-100, chunk n at replica n mod 10.
 func TestAcksTestcase03Check(t *testing.T) {
 	files := make([]*Acks, 10)

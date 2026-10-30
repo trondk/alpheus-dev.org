@@ -37,8 +37,8 @@ import (
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
-// bench is a run of the bench component (testcase01 and testcase02) and
-// what it measured.
+// bench is a run of the bench component (testcase01, testcase02 and
+// testcase03) and what it measured.
 type bench struct {
 	Testcase   string         `json:"testcase"`
 	Time       time.Time      `json:"time"`
@@ -90,9 +90,9 @@ func newBench(t *testing.T, testcase string, replicas map[string]int) *bench {
 }
 
 // start creates the testcase's StreamRun, waits for it to succeed, and reads
-// the sink's result with status.results alone (GO-82). It expects every
-// chunk once on each of ports.
-func (b *bench) start(e *env, ports ...string) {
+// the sink's result with status.results alone (GO-82). It expects want
+// chunks on each of ports.
+func (b *bench) start(e *env, want int, ports ...string) {
 	t := b.t
 	t.Helper()
 	r := e.wait(e.create(b.Testcase), 15*time.Minute)
@@ -117,8 +117,8 @@ func (b *bench) start(e *env, ports ...string) {
 		}
 	}
 	for _, p := range ports {
-		if got[p] != b.Chunks {
-			t.Errorf("sink got %d chunks on port %s, want %d", got[p], p, b.Chunks)
+		if got[p] != want {
+			t.Errorf("sink got %d chunks on port %s, want %d", got[p], p, want)
 		}
 	}
 	if len(got) != len(ports) {
@@ -136,6 +136,70 @@ func (b *bench) counts(want map[string]int) {
 			b.t.Errorf("%s counted %v, want %d chunks of %d bytes", step, s.Counts, chunks, b.ChunkBytes)
 		}
 	}
+}
+
+// acks checks that step's replicas together acked every chunk of from's
+// default output once, chunk n at replica n mod replicas (GO-36, GO-76),
+// and returns the chunks each replica acked.
+func (b *bench) acks(from, step string) [][]int64 {
+	t := b.t
+	t.Helper()
+	edge := chunk.EdgeStream(string(b.run.UID), chunk.EdgeName(from, chunk.DefaultOutput, step), 0)
+	replicas := b.Replicas[step]
+	perReplica := make([][]int64, replicas)
+	var all []int64
+	for r := range replicas {
+		perReplica[r] = acks(t, b.store, edge.AckKey(step, r))
+		for _, n := range perReplica[r] {
+			if got := chunk.Assign(n, 0, replicas); got != r {
+				t.Errorf("%s replica %d acked chunk %d, which goes to replica %d", step, r, n, got)
+			}
+		}
+		all = append(all, perReplica[r]...)
+	}
+	slices.Sort(all)
+	want := make([]int64, b.Chunks)
+	for i := range want {
+		want[i] = int64(i + 1)
+	}
+	if !slices.Equal(all, want) {
+		t.Errorf("%s acked %v, want 1-%d once each", step, all, b.Chunks)
+	}
+	return perReplica
+}
+
+// consumed checks that the sink committed its result with the default
+// output of each of from's replicas consumed to its last chunk, and that
+// each of those streams has EOS (GO-80, GO-95). It returns the last
+// manifests of those streams by step and replica.
+func (b *bench) consumed(from ...string) map[string][]*chunk.Manifest {
+	t := b.t
+	t.Helper()
+	uid := string(b.run.UID)
+	res := b.run.Status.Results[0]
+	m := manifest(t, b.store, chunk.ResultStream(b.run.Name, uid, res.Step, res.Output, 0).ManifestKey())
+	last := map[string][]*chunk.Manifest{}
+	ids := map[string]bool{}
+	for _, step := range from {
+		for r := range b.Replicas[step] {
+			in := chunk.EdgeStream(uid, chunk.EdgeName(step, chunk.DefaultOutput, "sink"), r)
+			l := manifest(t, b.store, in.ManifestKey())
+			if !l.EOS {
+				t.Errorf("%s has no EOS", in.ID)
+			}
+			if got := m.Consumed[in.ID]; got != l.Count() {
+				t.Errorf("sink consumed %s to %d, want its last chunk %d", in.ID, got, l.Count())
+			}
+			last[step] = append(last[step], l)
+			ids[in.ID] = true
+		}
+	}
+	for id := range m.Consumed {
+		if !ids[id] {
+			t.Errorf("sink consumed %s, which is not from %v", id, from)
+		}
+	}
+	return last
 }
 
 func (b *bench) measure(e *env) {

@@ -1,0 +1,29 @@
+# testcase03 (SPEC.md 12.1): 64 chunks through filter with 10 replicas,
+# which drops every chunk whose number is a multiple of 10, so replica 0
+# gets chunks but outputs none. sink checks the other chunks. The image
+# digest is a placeholder; test/e2e/testdata/testcase03.yaml is the one
+# the end-to-end test runs.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase03
+spec:
+  steps:
+    - name: source
+      image: registry.alpheus.test:30500/alpheus-test/bench@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      settings: {role: source, chunks: 64, size: 4194304, seed: 3}
+    - name: filter
+      image: registry.alpheus.test:30500/alpheus-test/bench@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      replicas: 10
+      settings: {role: pass, drop: 10}
+    - name: sink
+      image: registry.alpheus.test:30500/alpheus-test/bench@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      settings: {role: sink, chunks: 64, size: 4194304, seed: 3, skip: 10}
+  edges:
+    - {from: source, to: filter}
+    - {from: filter, to: sink}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

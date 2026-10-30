@@ -19,12 +19,10 @@ package e2e
 import (
 	"context"
 	"errors"
-	"slices"
 	"testing"
 
 	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/internal/store"
-	"alpheus-dev.org/alpheus/sdk"
 )
 
 // TestTestcase02 runs source -> left and right -> sink: fan-out from one
@@ -32,60 +30,17 @@ import (
 // checks every byte and expects every chunk once on each port.
 func TestTestcase02(t *testing.T) {
 	b := newBench(t, "testcase02", map[string]int{"left": 3, "right": 2})
-	b.start(setup(t), "left", "right")
+	b.start(setup(t), b.Chunks, "left", "right")
 	b.counts(map[string]int{"source": b.Chunks, "left": b.Chunks, "right": b.Chunks, "sink": 2 * b.Chunks})
 
-	uid := string(b.run.UID)
-	want := make([]int64, b.Chunks)
-	for i := range want {
-		want[i] = int64(i + 1)
-	}
-
 	// Fan-out: each consuming step has its own ack files on source's
-	// stream (GO-36), and its replicas together acked every chunk once,
-	// chunk n at replica n mod replicas (GO-76).
-	for _, step := range []string{"left", "right"} {
-		edge := chunk.EdgeStream(uid, chunk.EdgeName("source", sdk.DefaultOutput, step), 0)
-		replicas := b.Replicas[step]
-		var all []int64
-		for r := range replicas {
-			acked := acks(t, b.store, edge.AckKey(step, r))
-			for _, n := range acked {
-				if got := chunk.Assign(n, 0, replicas); got != r {
-					t.Errorf("%s replica %d acked chunk %d, which goes to replica %d", step, r, n, got)
-				}
-			}
-			all = append(all, acked...)
-		}
-		slices.Sort(all)
-		if !slices.Equal(all, want) {
-			t.Errorf("%s acked %v, want 1-%d once each", step, all, b.Chunks)
-		}
-	}
+	// stream, and its replicas together acked every chunk once.
+	b.acks("source", "left")
+	b.acks("source", "right")
 
-	// Fan-in: the sink committed its result with every incoming stream
-	// consumed to its last chunk (GO-80, GO-95).
-	res := b.run.Status.Results[0]
-	result := chunk.ResultStream(b.run.Name, uid, res.Step, res.Output, 0)
-	m := manifest(t, b.store, result.ManifestKey())
-	var streams int
-	for _, step := range []string{"left", "right"} {
-		edge := chunk.EdgeName(step, sdk.DefaultOutput, "sink")
-		for r := range b.Replicas[step] {
-			in := chunk.EdgeStream(uid, edge, r)
-			last := manifest(t, b.store, in.ManifestKey())
-			if !last.EOS {
-				t.Errorf("%s has no EOS", in.ID)
-			}
-			if got := m.Consumed[in.ID]; got != last.Count() {
-				t.Errorf("sink consumed %s to %d, want its last chunk %d", in.ID, got, last.Count())
-			}
-			streams++
-		}
-	}
-	if len(m.Consumed) != streams {
-		t.Errorf("sink consumed %v, want %d streams", m.Consumed, streams)
-	}
+	// Fan-in: the sink committed its result with all five incoming
+	// streams consumed.
+	b.consumed("left", "right")
 	b.report()
 }
 

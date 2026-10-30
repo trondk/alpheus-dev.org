@@ -80,12 +80,12 @@ alpheus/
 │   ├── crd/bases/         StreamRun-CRD'en (findes)
 │   ├── manager/           controllerens Deployment, hub-Service og RBAC-binding (findes)
 │   ├── default/           CRD, RBAC og controller samlet, til kustomize (findes)
-│   └── samples/           eksempler, bl.a. testcase03-replicas (findes)
+│   └── samples/           eksempler, bl.a. testcase03 (findes)
 ├── hack/                  boilerplate, test-crd.sh, images.sh og e2e.sh (findes)
 ├── charts/alpheus/        Helm-chart
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 (findes), testcase02, testcase03-replicas og fejltests
+│   ├── e2e/               testcase01, testcase02 og testcase03 (findes), og fejltests
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── docs/                  kilde til dokumentationen på hjemmesiden
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
@@ -563,7 +563,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` og `stomp` | fælles suite, Artemis i en container |
-| E2E | testcase01, testcase02, testcase03-replicas, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01, testcase02, testcase03, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -619,7 +619,7 @@ med `status.results` alene (GO-82). Den måler:
 Størrelserne kan ændres med `BENCH_CHUNKS`, `BENCH_SIZE`,
 `BENCH_PASS_REPLICAS` og `BENCH_MAX_UNACKED` (standard 64 chunks på
 4 MiB, én `pass`-replika og `maxUnacked: 4`). `make bench` kører
-testcase01 og testcase02 og gemmer målingerne som JSON i `_out/bench/`.
+testcase01, testcase02 og testcase03 og gemmer målingerne som JSON i `_out/bench/`.
 Alle trin kører på samme node, så tiderne fra `source` og `sink` kan
 sammenlignes.
 
@@ -653,32 +653,32 @@ Testen kontrollerer ud over testcase01's kontroller:
 Målingerne er de samme som i testcase01, med latens pr. indgang.
 Replikaerne ændres med `BENCH_LEFT_REPLICAS` og `BENCH_RIGHT_REPLICAS`.
 
-**testcase03-replicas: salgsrapport med replikaer.**
+**testcase03: replikaer og en replika uden output.**
 
 ```
-generate ──> filter (10 replikaer) ──> sum ──> resultat i S3
+source ──> filter (pass, 10 replikaer, drop: 10) ──> sink ──> resultat i S3
 ```
 
-- `generate` laver en salgsrapport i 100 dele (chunk 1 til 100). Hver
-  række er et salg: `order_id`, `date`, `country`, `product`,
-  `quantity`, `amount`. Dataene laves ud fra et fast seed, så de er ens
-  hver gang. Delene 10, 20, 30 … 100 indeholder ingen `DK`-rækker; alle
-  andre dele indeholder `DK`-rækker blandt andre lande.
-- `filter` kører med `replicas: 10`. Hver replika læser sine egne dele
-  (GO-76) og sender kun `DK`-rækkerne videre. `generate` har én
-  replika (p = 0), så del n går til replika n mod 10, og replika 0 får
-  præcis delene 10, 20 … 100. Replika 0 laver derfor intet output og
-  skal alligevel afslutte med EOS (GO-80). Det er testens svære kant.
-- `sum` lægger `DK`-salget sammen pr. produkt (antal og beløb) og
-  skriver summen til resultatet `result` ved EOS (GO-48, 5.2).
-- Runnet er færdigt med fasen `Succeeded`, og `status.results` siger,
-  hvor resultatet ligger, og hvilken Secret der giver adgang.
+Samme komponent som testcase01. `pass` har indstillingen `drop`: den
+dropper hver chunk, hvis nummer i dens input-strøm går op i `drop`, og
+tæller dem i enheden `dropped`. `sink` har den tilsvarende `skip` og
+forventer kun de øvrige chunks.
+
+- `filter` kører med `replicas: 10` og `drop: 10`. `source` har én
+  replika (p = 0), så chunk n går til replika n mod 10 (GO-76), og
+  replika 0 får præcis chunks 10, 20, 30 …. Den dropper dem alle, laver
+  derfor intet output og skal alligevel afslutte med EOS (GO-80). Det er
+  testens svære kant.
+- `sink` kører med `skip: 10`, kontrollerer hver byte og fejler, hvis en
+  chunk, der skulle være droppet, kommer frem.
+- Replikaantallet ændres med `BENCH_FILTER_REPLICAS`, og `drop` og
+  `skip` følger det, så replika 0 altid får præcis de droppede chunks.
 
 | ID | Niveau | Krav |
 |---|---|---|
-| GO-81 | SKAL | Testen kontrollerer, at summen i resultatet er lig med summen beregnet direkte fra `generate`s data. |
-| GO-84 | SKAL | Testen læser de ti `filter`-replikaers ack-filer (GO-36) og kontrollerer, at mængderne af ackede chunks er disjunkte, at deres forening er præcis 1–100, og at chunk n ligger hos replika n mod 10. Testen afhænger ikke af logs. |
-| GO-85 | SKAL | Testen kontrollerer, at replika 0's udgående manifest har nul chunks og `eos: true`, og at `sum` alligevel er nået til EOS. |
+| GO-81 | SKAL | Testen kontrollerer, at resultatet har præcis de chunks, der ikke går op i 10, hver med det indhold, generatoren laver uden Alpheus, og at `filter` talte 10 % af dem som `dropped`. |
+| GO-84 | SKAL | Testen læser de ti `filter`-replikaers ack-filer (GO-36) og kontrollerer, at mængderne af ackede chunks er disjunkte, at deres forening er præcis alle chunks, og at chunk n ligger hos replika n mod 10. Testen afhænger ikke af logs. |
+| GO-85 | SKAL | Testen kontrollerer, at replika 0's udgående manifest har nul chunks, `last: 0` og `eos: true`, at de andre replikaer skrev én chunk pr. ackede chunk, og at `sink` alligevel er nået til EOS med alle ti strømme forbrugt. |
 | GO-82 | SKAL | Testen henter resultatet med oplysningerne i `status.results` og intet andet, så den også tester, at de er nok. |
 
 ### 12.2 Testmiljø (Vagrant)
@@ -782,12 +782,15 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    tilbage, når den satte sin finalizer (`168h` blev til `168h0m0s`), og
    bruger nu en patch; og `status.results` manglede regionen, som
    Garage kræver (GO-79).
-7. Fan-out og fan-in med testcase02, replikaer med testcase03-replicas.
-   *I gang*: testcase02 kører på testklyngen (12.1), og agent-testen
-   `TestFanOutFanIn` kører samme form i hukommelsen med `make test`.
-   Med standardstørrelsen: ca. 34 MB/s ind i `sink` og en latens pr.
-   chunk på 450–650 ms (p50–p95), da hver chunk nu læses af to trin.
-   Mangler: testcase03-replicas.
+7. Fan-out og fan-in med testcase02, replikaer med testcase03.
+   *Færdig*: begge kører på testklyngen (12.1), og agent-testen
+   `TestFanOutFanIn` kører testcase02's form i hukommelsen med
+   `make test`. Med standardstørrelsen: testcase02 ca. 23–34 MB/s ind i
+   `sink` og en latens pr. chunk på 450–1100 ms (p50–p95), da hver chunk
+   læses af to trin; testcase03 ca. 16 MB/s og 570–1000 ms med ti
+   `filter`-replikaer på én node. testcase03 blev bygget med
+   `bench`-komponenten i stedet for den oprindelige salgsrapport i CSV,
+   så testene stadig ikke afhænger af et dataformat.
 8. Genstart, backpressure og kaos-test.
 9. `stomp`-driveren.
 10. CLI, Helm-chart og første udgivelse `v0.1.0`.

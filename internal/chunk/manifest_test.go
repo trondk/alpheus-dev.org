@@ -82,8 +82,8 @@ func TestManifestSealsSegments(t *testing.T) {
 	}
 }
 
-// A replica that gets only chunks without matching rows ends its stream
-// with no chunks and eos (GO-80, testcase03-replicas).
+// A replica that drops every chunk it gets ends its stream with no chunks
+// and eos (GO-80, testcase03).
 func TestManifestEndsEmpty(t *testing.T) {
 	m := NewManifest("r", "uid", "filter-sum", 0, 1)
 	for _, n := range []int64{10, 20, 30} {

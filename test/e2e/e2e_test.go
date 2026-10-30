@@ -32,10 +32,11 @@ limitations under the License.
 //	ALPHEUS_E2E_OUT                 folder for each run's measurements as
 //	                                JSON; not set means they are only logged
 //
-// testcase01 and testcase02 also read BENCH_CHUNKS, BENCH_SIZE (bytes per
-// chunk) and BENCH_MAX_UNACKED, with defaults 64, 4 MiB and 4, and
+// The testcases also read BENCH_CHUNKS, BENCH_SIZE (bytes per chunk) and
+// BENCH_MAX_UNACKED, with defaults 64, 4 MiB and 4, and
 // BENCH_<STEP>_REPLICAS for the steps between source and sink: PASS
-// (default 1) in testcase01, LEFT and RIGHT (3 and 2) in testcase02.
+// (default 1) in testcase01, LEFT and RIGHT (3 and 2) in testcase02, and
+// FILTER (10) in testcase03.
 package e2e
 
 import (

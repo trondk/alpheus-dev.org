@@ -14,29 +14,31 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command bench is the test component of testcase01 and testcase02, which
-// measure how the system performs (SPEC 12.1). It has three roles:
+// Command bench is the test component of testcase01, testcase02 and
+// testcase03 (SPEC 12.1). It has three roles:
 //
 //   - source writes chunks chunks of size bytes. Each starts with a header
 //     of 16 bytes, the chunk's number and the time it was started, as
 //     little-endian uint64 and Unix nanoseconds, followed by bytes from a
 //     ChaCha8 generator seeded by seed and the number.
 //
-//   - pass copies each input chunk to the default output unchanged.
+//   - pass copies each input chunk to the default output unchanged. With
+//     drop, it drops the chunks whose number in its input stream is a
+//     multiple of drop, and counts them in the unit dropped.
 //
 //   - sink reads each chunk, notes when it got it, and checks its bytes
 //     against the generator. It expects every chunk once on each of its
-//     ports. At EOS it writes the CSV chunk
+//     ports, except the chunks whose number is a multiple of skip. At EOS it writes the CSV chunk
 //
 //     port,n,bytes,written_ns,received_ns
 //
 //     to the default output, one line per chunk, by port and number. It
 //     fails if a chunk is wrong, comes twice on a port, comes on a port
-//     not in ports, or is missing.
+//     not in ports, should have been skipped, or is missing.
 //
 // Settings: {"role": "source", "chunks": 64, "size": 4194304, "seed": 1}.
-// sink needs the same chunks, size and seed as source, and ports, which
-// defaults to ["default"]; pass needs none.
+// sink needs the same chunks, size and seed as source, and takes ports,
+// which defaults to ["default"], and skip; pass takes only drop.
 //
 // It counts the units chunks and bytes.
 package main
@@ -67,6 +69,10 @@ type settings struct {
 	Seed   uint64 `json:"seed"`
 	// Ports are the inputs sink expects every chunk on.
 	Ports []string `json:"ports"`
+	// Drop makes pass drop every chunk whose number is a multiple of it,
+	// and Skip makes sink expect that; 0 means none.
+	Drop int64 `json:"drop"`
+	Skip int64 `json:"skip"`
 }
 
 func main() {
@@ -81,11 +87,14 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
 	if s.Role != "pass" && (s.Chunks < 1 || s.Size < headerSize) {
 		return fmt.Errorf("%w: %s needs chunks of at least 1 and size of at least %d bytes", sdk.ErrUsage, s.Role, headerSize)
 	}
+	if s.Drop < 0 || s.Skip < 0 {
+		return fmt.Errorf("%w: drop and skip must not be negative", sdk.ErrUsage)
+	}
 	switch s.Role {
 	case "source":
 		return source(ctx, s, out)
 	case "pass":
-		return pass(ctx, in, out)
+		return pass(ctx, s, in, out)
 	case "sink":
 		return sink(ctx, s, in)
 	}
@@ -124,10 +133,19 @@ func source(ctx context.Context, s settings, out sdk.Output) error {
 	return nil
 }
 
-func pass(ctx context.Context, in sdk.Input, out sdk.Output) error {
+// skipped tells whether chunk n is a multiple of every, when every is set.
+func skipped(n, every int64) bool {
+	return every > 0 && n%every == 0
+}
+
+func pass(ctx context.Context, s settings, in sdk.Input, out sdk.Output) error {
 	for c, err := range in.Chunks(ctx) {
 		if err != nil {
 			return err
+		}
+		if skipped(c.N, s.Drop) {
+			sdk.Count(ctx, "dropped", 1)
+			continue
 		}
 		src, err := c.Open()
 		if err != nil {
@@ -163,7 +181,11 @@ func sink(ctx context.Context, s settings, in sdk.Input) error {
 	}
 	var got []timing
 	in.OnEOS(func(ctx context.Context, out sdk.Output) error {
-		if want := s.Chunks * len(s.Ports); len(got) != want {
+		want := s.Chunks
+		if s.Skip > 0 {
+			want -= s.Chunks / int(s.Skip)
+		}
+		if want *= len(s.Ports); len(got) != want {
 			return fmt.Errorf("got %d chunks, want %d", len(got), want)
 		}
 		slices.SortFunc(got, func(a, b timing) int {
@@ -192,6 +214,9 @@ func sink(ctx context.Context, s settings, in sdk.Input) error {
 		t, err := check(s, c.Path)
 		if err != nil {
 			return fmt.Errorf("chunk %d from %s/%d: %w", c.N, c.Step, c.Replica, err)
+		}
+		if skipped(t.n, s.Skip) {
+			return fmt.Errorf("chunk %d came on port %s, but every %dth should be skipped", t.n, c.Port, s.Skip)
 		}
 		if !slices.Contains(s.Ports, c.Port) {
 			return fmt.Errorf("chunk %d came on port %q, want one of %q", t.n, c.Port, s.Ports)

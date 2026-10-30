@@ -23,8 +23,8 @@ also needs [buf](https://buf.build/docs/installation).
 | `make test` | Runs every test with the race detector |
 
 `make test` needs no cluster and no S3. The agents and components run in
-one process against storage in memory, through a pipeline shaped like
-the test case `generate`, `filter` with ten replicas, then `sum`. The
+one process against storage in memory, through pipelines of a few
+steps, one of them with ten replicas, and through fan-out and fan-in. The
 tests crash steps halfway and check that the result is still right. The
 controller's tests run against a real Kubernetes API server and etcd
 from envtest, which `make test` downloads the first time.
@@ -72,7 +72,7 @@ With the cluster running:
 | `make test-s3` | Runs the storage tests against Garage over HTTPS |
 | `make test-agent-s3` | Runs the agent pipeline against Garage, with signals through the hub and a restart |
 | `make e2e` | Builds the images, pushes them to Zot, installs the controller and runs the end-to-end tests |
-| `make bench` | Runs testcase01 and testcase02 and saves their measurements |
+| `make bench` | Runs testcase01, testcase02 and testcase03 and saves their measurements |
 
 ## End-to-end tests
 
@@ -128,11 +128,27 @@ acknowledgements in object storage to check that each branch split the
 chunks between its replicas as it should, and that `sink` finished only
 after both branches had ended.
 
-`make bench` runs both with the images from the last `make e2e`, and
-saves the measurements as JSON in `_out/bench/`. Change their sizes with
-`BENCH_CHUNKS`, `BENCH_SIZE` (bytes per chunk) and `BENCH_MAX_UNACKED`,
-and the replicas with `BENCH_PASS_REPLICAS`, `BENCH_LEFT_REPLICAS` and
-`BENCH_RIGHT_REPLICAS`:
+The third, testcase03, tests replicas, and in particular a replica that
+gets work but has nothing to pass on:
+
+```
+source ──> filter (10 replicas) ──> sink ──> result
+```
+
+`filter` drops every chunk whose number is a multiple of 10. Chunks are
+split between the replicas by number, so replica 0 gets exactly chunks
+10, 20, 30 … and drops them all. It must still end its stream properly,
+or `sink` would wait for it forever. The test checks from the
+acknowledgements in object storage that the ten replicas split the
+chunks between them without overlap, that replica 0's stream ended with
+no chunks, and that `sink` got exactly the other chunks.
+
+`make bench` runs all three with the images from the last `make e2e`,
+and saves the measurements as JSON in `_out/bench/`. Change their sizes
+with `BENCH_CHUNKS`, `BENCH_SIZE` (bytes per chunk) and
+`BENCH_MAX_UNACKED`, and the replicas with `BENCH_PASS_REPLICAS`,
+`BENCH_LEFT_REPLICAS`, `BENCH_RIGHT_REPLICAS` and
+`BENCH_FILTER_REPLICAS`:
 
 ```console
 $ BENCH_CHUNKS=256 BENCH_PASS_REPLICAS=4 make bench

@@ -60,11 +60,11 @@ images:
 e2e:
 	hack/e2e.sh
 
-# Runs testcase01 and testcase02, with the images from the last make e2e,
+# Runs testcase01, testcase02 and testcase03, with the images from the last make e2e,
 # to see how the system performs. BENCH_* change their sizes (see
 # test/e2e/e2e_test.go).
 bench:
-	SKIP_IMAGES=1 hack/e2e.sh -run 'TestTestcase0[12]$$'
+	SKIP_IMAGES=1 hack/e2e.sh -run 'TestTestcase0[1-3]$$'
 
 # Alpheus never reads a chunk's content, so it must not depend on Parquet or
 # Arrow (GO-101).

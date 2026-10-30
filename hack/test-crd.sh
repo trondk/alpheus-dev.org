@@ -61,7 +61,7 @@ create "Unsupported value" "unknown signal driver" \
   < <(sample '$a\  signals: {driver: kafka}')
 create "should be greater than or equal to 1" "maxUnacked 0" \
   < <(sample 's/maxUnacked: 4/maxUnacked: 0/')
-create ok "testcase03-replicas sample is valid" < "$ROOT/config/samples/testcase03-replicas.yaml"
+create ok "testcase03 sample is valid" < "$ROOT/config/samples/testcase03.yaml"
 create "should be greater than or equal to 1" "replicas 0" \
   < <(sample 's/- name: sum/- name: sum\n      replicas: 0/')
 create "should be less than or equal to 64" "replicas 65" \

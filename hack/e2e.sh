@@ -5,7 +5,7 @@
 #
 # Usage: hack/e2e.sh [go test flags], for example -run TestTestcase01
 #   SKIP_IMAGES=1  use the images in _out/images.env from the last run
-#   BENCH_*        testcase01's sizes (see test/e2e/e2e_test.go)
+#   BENCH_*        the testcases' sizes (see test/e2e/e2e_test.go)
 # Measurements are written to _out/bench.
 set -euo pipefail
 

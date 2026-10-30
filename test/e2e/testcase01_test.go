@@ -29,7 +29,7 @@ import (
 // unchanged.
 func TestTestcase01(t *testing.T) {
 	b := newBench(t, "testcase01", map[string]int{"pass": 1})
-	b.start(setup(t), sdk.DefaultPort)
+	b.start(setup(t), b.Chunks, sdk.DefaultPort)
 	b.counts(map[string]int{"source": b.Chunks, "pass": b.Chunks, "sink": b.Chunks})
 	b.report()
 }

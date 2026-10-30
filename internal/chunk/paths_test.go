@@ -74,8 +74,8 @@ func TestAssignPartitions(t *testing.T) {
 	}
 }
 
-// testcase03-replicas relies on replica 0 getting exactly the parts without
-// DK: 10, 20 ... 100 (SPEC 12.1).
+// testcase03 relies on replica 0 getting exactly the chunks filter drops:
+// 10, 20 ... 100 (SPEC 12.1).
 func TestAssignTestcase03(t *testing.T) {
 	var got []int64
 	for n := int64(1); n <= 100; n++ {
