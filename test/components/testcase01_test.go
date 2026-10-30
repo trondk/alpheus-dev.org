@@ -52,12 +52,12 @@ func TestTestcase01Local(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 6 || lines[0] != "n,bytes,written_ns,received_ns" {
+	if len(lines) != 6 || lines[0] != "port,n,bytes,written_ns,received_ns" {
 		t.Fatalf("timings:\n%s", data)
 	}
 	for i, line := range lines[1:] {
 		var n, size, written, received int64
-		if _, err := fmt.Sscanf(line, "%d,%d,%d,%d", &n, &size, &written, &received); err != nil {
+		if _, err := fmt.Sscanf(line, "default,%d,%d,%d,%d", &n, &size, &written, &received); err != nil {
 			t.Fatalf("%q: %v", line, err)
 		}
 		if n != int64(i+1) || size != 100000 || received < written {

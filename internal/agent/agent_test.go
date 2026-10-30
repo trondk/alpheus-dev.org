@@ -363,6 +363,76 @@ func TestPipelineWithHub(t *testing.T) {
 	checkPipeline(t, st, 30, 10)
 }
 
+// generate's output goes to two steps (fan-out), and sum reads from both
+// (fan-in): every chunk reaches each consuming step once, through its own
+// ack files (GO-36), and sum gets EOS only when both inputs have ended.
+func TestFanOutFanIn(t *testing.T) {
+	const parts = 12
+	base := Config{Run: testRun, Namespace: "default", UID: testUID, MaxUnacked: 2, Poll: Duration{50 * time.Millisecond}}
+	gen := base
+	gen.Step = "generate"
+	gen.Outputs = []OutputEdge{
+		{Edge: "generate-left", Output: "default", To: "left", Replicas: 3},
+		{Edge: "generate-right", Output: "default", To: "right", Replicas: 2},
+	}
+	rs := []replica{{gen, generate(parts)}}
+	for _, side := range []struct {
+		name     string
+		replicas int
+	}{{"left", 3}, {"right", 2}} {
+		for r := range side.replicas {
+			f := base
+			f.Step, f.Replica, f.Replicas = side.name, r, side.replicas
+			f.Inputs = []InputEdge{{Edge: "generate-" + side.name, From: "generate", Replicas: 1}}
+			f.Outputs = []OutputEdge{{Edge: side.name + "-sum", Output: "default", To: "sum", Replicas: 1}}
+			rs = append(rs, replica{f, filter})
+		}
+	}
+	s := base
+	s.Step = "sum"
+	s.Inputs = []InputEdge{
+		{Edge: "left-sum", From: "left", Replicas: 3},
+		{Edge: "right-sum", From: "right", Replicas: 2, Port: "right"},
+	}
+	rs = append(rs, replica{s, sum})
+
+	st := store.NewMemory()
+	if err := run(t, st, hub(t), rs...); err != nil {
+		t.Fatal(err)
+	}
+
+	result := chunk.ResultStream(testRun, testUID, "sum", "result", 0)
+	if m := readManifest(t, st, result); !m.EOS || len(m.Chunks) != 1 {
+		t.Fatalf("result manifest %+v", m)
+	}
+	data, err := store.ReadAll(context.Background(), st, result.ChunkKey(1, "txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(data)), fmt.Sprint(2*expected(parts)); got != want {
+		t.Errorf("sum %s, want %s: both sides once", got, want)
+	}
+
+	want := make([]int64, parts)
+	for i := range want {
+		want[i] = int64(i + 1)
+	}
+	for _, side := range []struct {
+		name     string
+		replicas int
+	}{{"left", 3}, {"right", 2}} {
+		edge := chunk.EdgeStream(testUID, "generate-"+side.name, 0)
+		var all []int64
+		for r := range side.replicas {
+			all = append(all, readAcks(t, st, edge.AckKey(side.name, r))...)
+		}
+		slices.Sort(all)
+		if !slices.Equal(all, want) {
+			t.Errorf("%s acked %v, want 1-%d once each", side.name, all, parts)
+		}
+	}
+}
+
 // Without signals the agents find everything by polling (GO-40).
 func TestPipelinePollingOnly(t *testing.T) {
 	st := store.NewMemory()

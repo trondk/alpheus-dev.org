@@ -1,0 +1,36 @@
+# testcase02 (SPEC 12.1): fan-out and fan-in with the bench component.
+# source's output goes to both left and right, which split the chunks
+# among their own replicas, and sink reads both on the ports left and
+# right. hack/e2e.sh sets the image, pinned by digest, the test sets the
+# sizes, and the test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase02
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 2}
+    - name: left
+      image: ${BENCH_IMAGE}
+      replicas: ${BENCH_LEFT_REPLICAS}
+      settings: {role: pass}
+    - name: right
+      image: ${BENCH_IMAGE}
+      replicas: ${BENCH_RIGHT_REPLICAS}
+      settings: {role: pass}
+    - name: sink
+      image: ${BENCH_IMAGE}
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 2, ports: [left, right]}
+  edges:
+    - {from: source, to: left}
+    - {from: source, to: right}
+    - {from: left, to: sink, port: left}
+    - {from: right, to: sink, port: right}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

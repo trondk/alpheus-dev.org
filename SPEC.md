@@ -600,8 +600,9 @@ lageret.
 - `pass` kopierer hver chunk uændret til sit output.
 - `sink` kontrollerer hver byte mod generatoren og noterer, hvornår
   chunken kom. Ved EOS skriver den resultatet `n,bytes,written_ns,received_ns`
-  med én linje pr. chunk. En forkert, dubleret eller manglende chunk får
-  trinnet til at fejle.
+  med én linje pr. chunk, med indgangen først
+  (`port,n,bytes,written_ns,received_ns`). En forkert, dubleret eller
+  manglende chunk får trinnet til at fejle.
 
 Testen kontrollerer, at runnet ender i `Succeeded`, at resultatet har
 alle chunks, og at alle tre trins tællere passer. Den finder resultatet
@@ -617,11 +618,40 @@ med `status.results` alene (GO-82). Den måler:
 
 Størrelserne kan ændres med `BENCH_CHUNKS`, `BENCH_SIZE`,
 `BENCH_PASS_REPLICAS` og `BENCH_MAX_UNACKED` (standard 64 chunks på
-4 MiB, én `pass`-replika og `maxUnacked: 4`). `make bench` kører kun
-testcase01 og gemmer målingerne som JSON i `_out/bench/`. Alle trin
-kører på samme node, så tiderne fra `source` og `sink` kan sammenlignes.
+4 MiB, én `pass`-replika og `maxUnacked: 4`). `make bench` kører
+testcase01 og testcase02 og gemmer målingerne som JSON i `_out/bench/`.
+Alle trin kører på samme node, så tiderne fra `source` og `sink` kan
+sammenlignes.
 
-testcase02 tester fan-out og fan-in og beskrives, før den laves.
+**testcase02: fan-out og fan-in.**
+
+```
+            ┌──> left  (pass, 3 replikaer) ──┐ indgang left
+source ─────┤                                ├──────────────> sink ──> resultat i S3
+            └──> right (pass, 2 replikaer) ──┘ indgang right
+```
+
+Samme komponent som testcase01, men strømmen deler sig og samles igen.
+`source`s ene udgang har to kanter, så hver chunk går til både `left` og
+`right`, der hver fordeler chunks mellem sine egne replikaer. `sink` har
+to indgange og indstillingen `ports: [left, right]`: den skal have hver
+chunk præcis én gang på hver indgang. Replikaantallene er forskellige,
+så de to grene fordeler chunks forskelligt.
+
+Testen kontrollerer ud over testcase01's kontroller:
+
+- Fan-out: `source`s strøm har egne ack-filer for `left` og `right`
+  (GO-36). `left`s tre filer indeholder tilsammen 1–64 præcis én gang,
+  med chunk n hos replika n mod 3, og `right`s to filer det samme med
+  n mod 2 (GO-76).
+- Fan-in: `consumed` i `sink`s resultat-manifest har alle fem indgående
+  strømme, hver til strømmens sidste chunk, og hver strøm har `eos`
+  (GO-80, GO-95). Hver chunk kom på sin grens indgang.
+- Tællerne: `source` 64, `left` og `right` 64 hver over replikaerne,
+  `sink` 128.
+
+Målingerne er de samme som i testcase01, med latens pr. indgang.
+Replikaerne ændres med `BENCH_LEFT_REPLICAS` og `BENCH_RIGHT_REPLICAS`.
 
 **testcase03-replicas: salgsrapport med replikaer.**
 
@@ -753,6 +783,11 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    bruger nu en patch; og `status.results` manglede regionen, som
    Garage kræver (GO-79).
 7. Fan-out og fan-in med testcase02, replikaer med testcase03-replicas.
+   *I gang*: testcase02 kører på testklyngen (12.1), og agent-testen
+   `TestFanOutFanIn` kører samme form i hukommelsen med `make test`.
+   Med standardstørrelsen: ca. 34 MB/s ind i `sink` og en latens pr.
+   chunk på 450–650 ms (p50–p95), da hver chunk nu læses af to trin.
+   Mangler: testcase03-replicas.
 8. Genstart, backpressure og kaos-test.
 9. `stomp`-driveren.
 10. CLI, Helm-chart og første udgivelse `v0.1.0`.

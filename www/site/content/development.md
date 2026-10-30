@@ -72,7 +72,7 @@ With the cluster running:
 | `make test-s3` | Runs the storage tests against Garage over HTTPS |
 | `make test-agent-s3` | Runs the agent pipeline against Garage, with signals through the hub and a restart |
 | `make e2e` | Builds the images, pushes them to Zot, installs the controller and runs the end-to-end tests |
-| `make bench` | Runs testcase01 alone and saves its measurements |
+| `make bench` | Runs testcase01 and testcase02 and saves their measurements |
 
 ## End-to-end tests
 
@@ -114,10 +114,25 @@ On the single-node test cluster, with the images already pulled, startup
 takes about a second and data moves at about 40 MB/s through the two
 hops.
 
-`make bench` runs testcase01 alone with the images from the last
-`make e2e`, and saves the measurements as JSON in `_out/bench/`. Change
-its sizes with `BENCH_CHUNKS`, `BENCH_SIZE` (bytes per chunk),
-`BENCH_PASS_REPLICAS` and `BENCH_MAX_UNACKED`:
+The second, testcase02, uses the same component for fan-out and fan-in:
+
+```
+            ┌──> left  (3 replicas) ──┐
+source ─────┤                         ├──> sink ──> result
+            └──> right (2 replicas) ──┘
+```
+
+Every chunk from `source` goes to both `left` and `right`, and `sink`
+must get each chunk exactly once from each of them. The test reads the
+acknowledgements in object storage to check that each branch split the
+chunks between its replicas as it should, and that `sink` finished only
+after both branches had ended.
+
+`make bench` runs both with the images from the last `make e2e`, and
+saves the measurements as JSON in `_out/bench/`. Change their sizes with
+`BENCH_CHUNKS`, `BENCH_SIZE` (bytes per chunk) and `BENCH_MAX_UNACKED`,
+and the replicas with `BENCH_PASS_REPLICAS`, `BENCH_LEFT_REPLICAS` and
+`BENCH_RIGHT_REPLICAS`:
 
 ```console
 $ BENCH_CHUNKS=256 BENCH_PASS_REPLICAS=4 make bench

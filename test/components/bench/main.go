@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command bench is the test component of testcase01, which measures how
-// the system performs (SPEC 12.1). It has three roles:
+// Command bench is the test component of testcase01 and testcase02, which
+// measure how the system performs (SPEC 12.1). It has three roles:
 //
 //   - source writes chunks chunks of size bytes. Each starts with a header
 //     of 16 bytes, the chunk's number and the time it was started, as
@@ -25,21 +25,25 @@ limitations under the License.
 //   - pass copies each input chunk to the default output unchanged.
 //
 //   - sink reads each chunk, notes when it got it, and checks its bytes
-//     against the generator. At EOS it writes the CSV chunk
+//     against the generator. It expects every chunk once on each of its
+//     ports. At EOS it writes the CSV chunk
 //
-//     n,bytes,written_ns,received_ns
+//     port,n,bytes,written_ns,received_ns
 //
-//     to the default output, one line per chunk in number order. It fails
-//     if a chunk is wrong, comes twice, or is missing.
+//     to the default output, one line per chunk, by port and number. It
+//     fails if a chunk is wrong, comes twice on a port, comes on a port
+//     not in ports, or is missing.
 //
 // Settings: {"role": "source", "chunks": 64, "size": 4194304, "seed": 1}.
-// sink needs the same chunks, size and seed as source; pass needs none.
+// sink needs the same chunks, size and seed as source, and ports, which
+// defaults to ["default"]; pass needs none.
 //
 // It counts the units chunks and bytes.
 package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -61,6 +65,8 @@ type settings struct {
 	Chunks int    `json:"chunks"`
 	Size   int64  `json:"size"`
 	Seed   uint64 `json:"seed"`
+	// Ports are the inputs sink expects every chunk on.
+	Ports []string `json:"ports"`
 }
 
 func main() {
@@ -145,29 +151,39 @@ func pass(ctx context.Context, in sdk.Input, out sdk.Output) error {
 }
 
 type timing struct {
+	port              string
 	n                 int64
 	bytes             int64
 	written, received int64
 }
 
 func sink(ctx context.Context, s settings, in sdk.Input) error {
+	if len(s.Ports) == 0 {
+		s.Ports = []string{sdk.DefaultPort}
+	}
 	var got []timing
 	in.OnEOS(func(ctx context.Context, out sdk.Output) error {
-		if len(got) != s.Chunks {
-			return fmt.Errorf("got %d chunks, want %d", len(got), s.Chunks)
+		if want := s.Chunks * len(s.Ports); len(got) != want {
+			return fmt.Errorf("got %d chunks, want %d", len(got), want)
 		}
-		slices.SortFunc(got, func(a, b timing) int { return int(a.n - b.n) })
+		slices.SortFunc(got, func(a, b timing) int {
+			return cmp.Or(cmp.Compare(a.port, b.port), cmp.Compare(a.n, b.n))
+		})
 		f, err := out.Create(ctx, sdk.DefaultOutput, "csv")
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(f, "n,bytes,written_ns,received_ns")
+		fmt.Fprintln(f, "port,n,bytes,written_ns,received_ns")
 		for _, t := range got {
-			fmt.Fprintf(f, "%d,%d,%d,%d\n", t.n, t.bytes, t.written, t.received)
+			fmt.Fprintf(f, "%s,%d,%d,%d,%d\n", t.port, t.n, t.bytes, t.written, t.received)
 		}
 		return f.Close()
 	})
-	seen := make(map[int64]bool)
+	type key struct {
+		port string
+		n    int64
+	}
+	seen := make(map[key]bool)
 	for c, err := range in.Chunks(ctx) {
 		if err != nil {
 			return err
@@ -177,11 +193,14 @@ func sink(ctx context.Context, s settings, in sdk.Input) error {
 		if err != nil {
 			return fmt.Errorf("chunk %d from %s/%d: %w", c.N, c.Step, c.Replica, err)
 		}
-		if seen[t.n] {
-			return fmt.Errorf("chunk %d came twice", t.n)
+		if !slices.Contains(s.Ports, c.Port) {
+			return fmt.Errorf("chunk %d came on port %q, want one of %q", t.n, c.Port, s.Ports)
 		}
-		seen[t.n] = true
-		t.received = received
+		if seen[key{c.Port, t.n}] {
+			return fmt.Errorf("chunk %d came twice on port %s", t.n, c.Port)
+		}
+		seen[key{c.Port, t.n}] = true
+		t.port, t.received = c.Port, received
 		got = append(got, t)
 		sdk.Count(ctx, "chunks", 1)
 		sdk.Count(ctx, "bytes", t.bytes)
