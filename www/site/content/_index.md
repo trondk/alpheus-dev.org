@@ -31,7 +31,7 @@ spec:
   edges:
     - {from: read, to: filter}
     - {from: filter, to: sum}
-  chunks: {maxRows: 50000, maxUnacked: 4}
+  chunks: {maxBytes: 512Mi, maxUnacked: 4}
   storage: {endpoint: http://s3.example:3900, bucket: flows, secretRef: alpheus-s3}
 ```
 
