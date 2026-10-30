@@ -24,7 +24,7 @@
 
 [[steps]]
   text = "End-to-end tests on Talos in the test VM, with a first flow."
-  done = false
+  done = true
 
 [[steps]]
   text = "Fan-out, fan-in and replicas, end to end."

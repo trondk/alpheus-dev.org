@@ -74,8 +74,9 @@ I rækkefølge, i én spalte:
    - Every step runs at the same time; data moves as chunks in S3, in any file format.
    - No message broker for data, only Kubernetes and an S3 endpoint.
    - The same component runs in batch and in streaming.
-4. **Hvordan det virker**, som en almindelig liste: controlleren kører
-   trinnene som pods, komponenten læser og skriver filer, agenten
+4. **Hvordan det virker**: en tegning af et run med tre trin på
+   Kubernetes (WWW-47) og derefter en almindelig liste: controlleren
+   kører trinnene som pods, komponenten læser og skriver filer, agenten
    flytter dem og committer dem i manifester, signaler går gennem hub'en
    med mTLS, og et trin genstarter fra sine manifester.
 5. **Et minimalt eksempel**: en StreamRun på 15–20 linjer og
@@ -173,6 +174,7 @@ Alpheus gør med data mellem trin.
 | WWW-14 | SKAL | Floden tegnes op én gang ved indlæsning (stroke-animation, under 2 sekunder) og står derefter stille. Med `prefers-reduced-motion` vises den færdig uden animation. |
 | WWW-15 | SKAL | Ingen anden dekorativ animation på siden. |
 | WWW-16 | BØR | Samme linje i lille udgave bruges som logo og favicon. |
+| WWW-47 | SKAL | Tegningen under "Hvordan det virker" viser et run på Kubernetes i flodens sprog: StreamRun og controller med signal-hub'en øverst, en pod pr. trin med komponent og agent, og under horisonten objektlageret, hvor data løber som floden fra agent til agent. Den er inline SVG med `role="img"`, titel og beskrivelse, står stille (WWW-15), bruger kun farverne i 4.2 i begge temaer og har større tekst på telefoner. Listen under den siger det samme i tekst. |
 
 ### 4.5 Layout
 

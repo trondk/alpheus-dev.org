@@ -12,6 +12,8 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
 
 ## How it works
 
+{{< how-it-works >}}
+
 - The controller runs each step of a `StreamRun` as pods: one per
   replica, with the step's component as the only container next to an
   agent.
@@ -28,7 +30,7 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
 
 ## A minimal flow
 
-A run is one `StreamRun` resource. {{< planned >}}The controller and the agent exist and pass their tests against a Kubernetes API server and S3 storage, but have not run a flow on a cluster yet. The `alpheus` CLI comes later; until then `kubectl apply -f flow.yaml` does the same.{{< /planned >}}
+A run is one `StreamRun` resource. {{< planned >}}A first flow runs end to end on a test cluster, but no images are published yet. The `alpheus` CLI comes later; until then `kubectl apply -f flow.yaml` does the same.{{< /planned >}}
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1

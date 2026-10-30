@@ -71,6 +71,31 @@ With the cluster running:
 | `make test-crd` | Checks the CRD's schema, defaults and validation rules against the cluster's API server |
 | `make test-s3` | Runs the storage tests against Garage over HTTPS |
 | `make test-agent-s3` | Runs the agent pipeline against Garage, with signals through the hub and a restart |
+| `make e2e` | Builds the images, pushes them to Zot, installs the controller and runs the end-to-end tests |
 
-End-to-end tests, with the controller and the agents running as pods on
-the cluster, are the next step on the [roadmap](/#roadmap).
+## End-to-end tests
+
+`make e2e` runs {{< repolink "hack/e2e.sh" >}}. It builds the agent, the
+controller and the test components as static binaries, each in an image
+with nothing else in it, and pushes them to Zot. It installs the CRD
+and the controller with those images, pinned by digest, and runs the
+tests in {{< repolink "test/e2e/" >}} as ordinary Go tests against the
+cluster.
+
+The first test case, testcase01, is a sales file in Danish number format,
+filtered for Denmark and summed per product:
+
+1. `generate` writes the input file as one chunk.
+2. `filter` keeps the Danish rows: `DK`, `Denmark`, `Danmark` and ` dk `.
+3. `sum` adds up quantity and amount per product, rejects a row with a
+   missing amount and logs it, and writes the result at the end.
+
+The test waits for the run to succeed, then fetches the result using
+only what the run's status says about it, and compares it byte for byte
+with a golden file in {{< repolink "test/fixtures/" >}}. It also checks
+the counters and the error log: rows read, excluded and rejected, and
+the total.
+
+Run it again without rebuilding the images with
+`SKIP_IMAGES=1 hack/e2e.sh`. Images are built with fixed timestamps, so
+unchanged code gives the same digests.

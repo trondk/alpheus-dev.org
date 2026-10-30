@@ -2,8 +2,8 @@
 
 [design]
   name = "design phase"
-  short = "Early code exists, but nothing runs on Kubernetes yet."
-  long = "The API, the chunk format, the component SDK, the agent and the controller exist as code and pass their tests against a Kubernetes API server and S3 storage, but no flow has run on a cluster yet and no images are published. Do not plan production use. The next phases are alpha, beta and stable, and this page will say which one applies."
+  short = "Early code runs on a test cluster, but nothing is released yet."
+  long = "The API, the chunk format, the component SDK, the agent and the controller exist as code, and a first flow runs end to end on a test cluster, but no images are published. Do not plan production use. The next phases are alpha, beta and stable, and this page will say which one applies."
 
 [alpha]
   name = "alpha"

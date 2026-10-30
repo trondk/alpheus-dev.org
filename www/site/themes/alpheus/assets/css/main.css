@@ -180,6 +180,45 @@ li + li { margin-top: 0.5rem; }
   color: var(--sediment);
 }
 
+/* How it works on Kubernetes: a still drawing, colours from the
+   palette only (WWW-41). */
+.k8s { margin: 1.5rem 0 2rem; }
+.k8s svg {
+  display: block;
+  width: 100%;
+  max-width: 36rem;
+  height: auto;
+}
+.k8s text {
+  fill: var(--text);
+  font-size: 14px;
+  text-anchor: middle;
+}
+.k8s .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; }
+.k8s .strong { font-weight: 600; }
+.k8s .note { fill: var(--sediment); font-size: 12.5px; }
+.k8s .start { text-anchor: start; }
+.k8s .end { text-anchor: end; }
+.k8s .box { fill: var(--surface); stroke: var(--horizon); stroke-width: 1; }
+.k8s .inner { fill: var(--bg); stroke: var(--horizon); stroke-width: 1; }
+.k8s .frame { fill: none; stroke: var(--horizon); stroke-width: 1.5; }
+.k8s .ground { fill: var(--surface); }
+.k8s .horizon { stroke: var(--horizon); stroke-width: 1.5; }
+.k8s .ctl, .k8s .sig, .k8s .data, .k8s .under { fill: none; }
+.k8s .ctl { stroke: var(--sediment); stroke-width: 1.5; }
+.k8s .sig { stroke: var(--sediment); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.k8s .data { stroke: var(--spring); stroke-width: 3; stroke-linecap: round; }
+.k8s .under { stroke: var(--groundwater); stroke-width: 3; stroke-dasharray: 8 7; stroke-linecap: round; }
+.k8s .head-ctl { fill: var(--sediment); }
+.k8s .head-data { fill: var(--spring); }
+.k8s figcaption { margin-top: 0.75rem; color: var(--sediment); }
+/* The drawing scales down on phones; the boxes have room for larger text. */
+@media (max-width: 40rem) {
+  .k8s text { font-size: 16px; }
+  .k8s .mono { font-size: 15px; }
+  .k8s .note { font-size: 14.5px; }
+}
+
 /* Drawn once on load, then still. Without motion it is shown finished. */
 @media (prefers-reduced-motion: no-preference) {
   .draw {
