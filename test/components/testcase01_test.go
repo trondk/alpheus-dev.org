@@ -17,96 +17,115 @@ limitations under the License.
 package components_test
 
 import (
-	"bytes"
 	"encoding/json"
-	"io/fs"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"alpheus-dev.org/alpheus/sdk"
-	"alpheus-dev.org/alpheus/test/fixtures"
 )
 
-// The settings of testcase01's steps, as in test/e2e/testdata/testcase01.yaml.
-const (
-	filterSettings = `{"field": "country", "in": ["DK", "Denmark", "Danmark"], "delimiter": ";", "fold": true}`
-	sumSettings    = `{"group": "product", "delimiter": ";", "decimal": ","}`
-)
+const benchSettings = `{"role": "%s", "chunks": 5, "size": 100000, "seed": 7}`
 
-// TestTestcase01Local runs testcase01 with the components' binaries in
-// local mode, one step after the other, and compares the result with the
-// golden file byte for byte (GO-55).
+// TestTestcase01Local runs testcase01's steps, source, pass and sink, with
+// the bench binary in local mode, one after the other.
 func TestTestcase01Local(t *testing.T) {
-	bin := t.TempDir()
-	build := exec.Command("go", "build", "-o", bin, "./generate", "./filter", "./sum")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
-	}
-
-	gen := step(t, bin, "generate", "", `{"fixture": "testcase01/sales.csv"}`)
-	filtered := step(t, bin, "filter", gen, filterSettings)
-	result := step(t, bin, "sum", filtered, sumSettings)
-
-	got, err := os.ReadFile(filepath.Join(result, "part-000001.csv"))
+	bin := build(t)
+	src, err := step(bin, "", fmt.Sprintf(benchSettings, "source"), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := fs.ReadFile(fixtures.FS, "testcase01/result.csv")
+	passed, err := step(bin, src, `{"role": "pass"}`, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("result:\n%s\nwant:\n%s", got, want)
+	result, err := step(bin, passed, fmt.Sprintf(benchSettings, "sink"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// MCPipe's report, from the counters and the error log.
-	f, s := summary(t, filtered), summary(t, result)
-	if f.Counts["rows_in"] != 11 || f.Counts["rows_in"]-f.Counts["rows_out"] != 3 {
-		t.Errorf("filter counts %v, want 11 rows read and 3 excluded", f.Counts)
-	}
-	if s.Counts["rows_included"] != 7 || s.Counts["rows_rejected"] != 1 || s.Errors != 1 {
-		t.Errorf("sum counts %v, %d errors; want 7 included and 1 rejected", s.Counts, s.Errors)
-	}
-	log, err := os.ReadFile(filepath.Join(filepath.Dir(result), sdk.ErrorLogFile))
+	data, err := os.ReadFile(filepath.Join(result, "part-000001.csv"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var e sdk.LogEntry
-	if err := json.Unmarshal(log, &e); err != nil {
-		t.Fatal(err)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 6 || lines[0] != "n,bytes,written_ns,received_ns" {
+		t.Fatalf("timings:\n%s", data)
 	}
-	if e.Code != "missing_amount" || e.Fields["product"] != "Kaffe" {
-		t.Errorf("error log entry %+v, want missing_amount for Kaffe", e)
+	for i, line := range lines[1:] {
+		var n, size, written, received int64
+		if _, err := fmt.Sscanf(line, "%d,%d,%d,%d", &n, &size, &written, &received); err != nil {
+			t.Fatalf("%q: %v", line, err)
+		}
+		if n != int64(i+1) || size != 100000 || received < written {
+			t.Errorf("line %q", line)
+		}
+	}
+	if s := summary(t, result); s.Counts["chunks"] != 5 || s.Counts["bytes"] != 500000 {
+		t.Errorf("sink counts %v", s.Counts)
 	}
 }
 
-// step runs a component in local mode with the chunks in input, and returns
-// a folder with only the chunks of its default output, ready to be the
-// next step's input.
-func step(t *testing.T, bin, name, input, settings string) string {
+// The sink fails on a changed byte and on a missing chunk.
+func TestTestcase01SinkChecks(t *testing.T) {
+	bin := build(t)
+	src, err := step(bin, "", fmt.Sprintf(benchSettings, "source"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts, _ := filepath.Glob(filepath.Join(src, "part-*"))
+
+	f, err := os.OpenFile(parts[2], os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteAt([]byte{0}, 5000)
+	f.Close()
+	if _, err := step(bin, src, fmt.Sprintf(benchSettings, "sink"), t.TempDir()); err == nil || !strings.Contains(err.Error(), "content differs") {
+		t.Errorf("changed byte: %v", err)
+	}
+
+	os.Remove(parts[2])
+	if _, err := step(bin, src, fmt.Sprintf(benchSettings, "sink"), t.TempDir()); err == nil || !strings.Contains(err.Error(), "got 4 chunks, want 5") {
+		t.Errorf("missing chunk: %v", err)
+	}
+}
+
+func build(t *testing.T) string {
 	t.Helper()
-	out := t.TempDir()
-	cmd := exec.Command(filepath.Join(bin, name))
+	bin := filepath.Join(t.TempDir(), "bench")
+	if out, err := exec.Command("go", "build", "-o", bin, "./bench").CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// step runs the bench binary in local mode with the chunks in input, and
+// returns a folder with only the chunks of its default output, ready to be
+// the next step's input.
+func step(bin, input, settings, out string) (string, error) {
+	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), sdk.EnvMode+"=local", sdk.EnvLocalOutput+"="+out, sdk.EnvSettings+"="+settings)
 	if input != "" {
 		cmd.Env = append(cmd.Env, sdk.EnvLocalInput+"="+input)
 	}
 	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("%s: %v\n%s", name, err, b)
+		return "", fmt.Errorf("%v: %s", err, b)
 	}
 	chunks := filepath.Join(out, "chunks")
 	if err := os.Mkdir(chunks, 0o755); err != nil {
-		t.Fatal(err)
+		return "", err
 	}
 	parts, _ := filepath.Glob(filepath.Join(out, sdk.DefaultOutput, "part-*"))
 	for _, p := range parts {
 		if err := os.Rename(p, filepath.Join(chunks, filepath.Base(p))); err != nil {
-			t.Fatal(err)
+			return "", err
 		}
 	}
-	return chunks
+	return chunks, nil
 }
 
 func summary(t *testing.T, chunks string) sdk.Summary {

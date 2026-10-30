@@ -5,6 +5,8 @@
 #
 # Usage: hack/e2e.sh [go test flags], for example -run TestTestcase01
 #   SKIP_IMAGES=1  use the images in _out/images.env from the last run
+#   BENCH_*        testcase01's sizes (see test/e2e/e2e_test.go)
+# Measurements are written to _out/bench.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -44,4 +46,5 @@ ALPHEUS_E2E_S3_ACCESS_KEY="$GARAGE_DEFAULT_ACCESS_KEY" \
 ALPHEUS_E2E_S3_SECRET_KEY="$GARAGE_DEFAULT_SECRET_KEY" \
 ALPHEUS_E2E_S3_ENDPOINT="https://$("$VAGRANT/talos.sh" ip):30900" \
 ALPHEUS_E2E_S3_CA_FILE="$VAGRANT/_out/ca.crt" \
+ALPHEUS_E2E_OUT="$OUT/bench" \
   go test -count=1 -v -timeout 20m ./test/e2e "$@"

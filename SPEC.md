@@ -84,9 +84,8 @@ alpheus/
 ├── hack/                  boilerplate, test-crd.sh, images.sh og e2e.sh (findes)
 ├── charts/alpheus/        Helm-chart
 ├── test/
-│   ├── components/        testkomponenter i CSV: generate, filter og sum (findes)
+│   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
 │   ├── e2e/               testcase01 (findes), testcase02, testcase03-replicas og fejltests
-│   ├── fixtures/          input og golden files (testcase01 findes)
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── docs/                  kilde til dokumentationen på hjemmesiden
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
@@ -569,8 +568,8 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | ID | Niveau | Krav |
 |---|---|---|
 | GO-54 | SKAL | Alle accepttests fra den funktionelle specifikation kører automatisk i CI på hver pull request mod `main`. |
-| GO-55 | SKAL | testcase01 og testcase02 sammenlignes byte for byte med golden files i `test/fixtures`. |
-| GO-56 | SKAL | En kaos-test slår tilfældige trin-pods ihjel under et run og kontrollerer, at resultatet stadig matcher golden file. |
+| GO-55 | SKAL | Hver testcase kontrollerer sit resultat mod noget, der er beregnet uden Alpheus: kildens egne data eller en kendt værdi. |
+| GO-56 | SKAL | En kaos-test slår tilfældige trin-pods ihjel under et run og kontrollerer, at resultatet stadig er korrekt (GO-55). |
 | GO-57 | SKAL | `go test -race` kører på alle pakker. |
 | GO-58 | BØR | Fuzz-tests for manifest-parsing i agenten. |
 | GO-74 | SKAL | Genstartstests slår agenten ihjel mellem hvert trin i commit-rækkefølgen (7.3 og 7.4) og kontrollerer, at output hverken mangler eller er dubleret. |
@@ -582,9 +581,47 @@ Testkomponenterne ligger i `test/components/` og bygges som images, der
 skubbes til Zot i testmiljøet. De bruger et simpelt format fra Gos
 standardbibliotek (CSV), da Alpheus ikke kender Parquet (GO-101).
 
-testcase01 og testcase02 er dem fra MCPipe-specifikationen og beholder
-deres betydning (testcase01 er `sales.csv` med golden file, DK i alt
-1846,50). Replikaer testes i en ny testcase med sit eget navn.
+Testcasene er Alpheus' egne. De tester det, Alpheus gør, og kender ikke
+noget bestemt dataformat.
+
+**testcase01: måling af systemet.**
+
+```
+source ──> pass ──> sink ──> resultat i S3
+```
+
+En simpel testcase, der også viser, hvordan systemet yder. Alle tre trin
+bruger testkomponenten `bench`, så hver chunk går to gange gennem
+lageret.
+
+- `source` laver `chunks` chunks på `size` bytes. Hver chunk begynder
+  med sit nummer og tidspunktet, den blev lavet, efterfulgt af bytes fra
+  en ChaCha8-generator med et fast seed.
+- `pass` kopierer hver chunk uændret til sit output.
+- `sink` kontrollerer hver byte mod generatoren og noterer, hvornår
+  chunken kom. Ved EOS skriver den resultatet `n,bytes,written_ns,received_ns`
+  med én linje pr. chunk. En forkert, dubleret eller manglende chunk får
+  trinnet til at fejle.
+
+Testen kontrollerer, at runnet ender i `Succeeded`, at resultatet har
+alle chunks, og at alle tre trins tællere passer. Den finder resultatet
+med `status.results` alene (GO-82). Den måler:
+
+| Måling | Fra |
+|---|---|
+| Opstart | Runnet er oprettet, til alle komponenter kører (pod-status, hele sekunder) |
+| Strøm | Første chunk er lavet, til sidste er modtaget |
+| I alt | Runnet er oprettet, til `Succeeded` |
+| Gennemløb | Bytes delt med strømmens varighed |
+| Latens | Pr. chunk fra den laves, til `sink` har den; p50, p95 og max |
+
+Størrelserne kan ændres med `BENCH_CHUNKS`, `BENCH_SIZE`,
+`BENCH_PASS_REPLICAS` og `BENCH_MAX_UNACKED` (standard 64 chunks på
+4 MiB, én `pass`-replika og `maxUnacked: 4`). `make bench` kører kun
+testcase01 og gemmer målingerne som JSON i `_out/bench/`. Alle trin
+kører på samme node, så tiderne fra `source` og `sink` kan sammenlignes.
+
+testcase02 tester fan-out og fan-in og beskrives, før den laves.
 
 **testcase03-replicas: salgsrapport med replikaer.**
 
@@ -704,14 +741,12 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    (`hack/e2e.sh`) bygger agent, controller og testkomponenterne som
    statiske binærer i images på `scratch` (uid 65532, reproducerbare
    digests), skubber dem til Zot, installerer CRD og controller med
-   `config/default` og kører `test/e2e`. testcase01 (`generate` med
-   `sales.csv` fra `test/fixtures`, `filter` og `sum`) ender i
-   `Succeeded`, resultatet er byte for byte lig med golden file (GO-55)
-   og hentes kun med oplysningerne i `status.results` (GO-82), og
-   tællere og fejllog giver MCPipes rapport (rækker læst, udeladt og
-   afvist, og totalen 1846,50). Tomme linjer tælles ikke, da CSV-læseren
-   springer dem over. Signalerne går gennem hub'en: hvert trin slutter
-   inden for ca. 50 ms efter det forrige. Fundet undervejs: hub'en
+   `config/default` og kører `test/e2e`. Den første testcase blev siden
+   erstattet af testcase01 i 12.1, som også måler systemet. På testklyngen
+   (én node, varmt image) giver standardstørrelsen ca. 1 s opstart, 40
+   MB/s gennem to hop og en latens pr. chunk på 300–500 ms. Signalerne
+   går gennem hub'en: hvert trin slutter inden for ca. 50 ms efter det
+   forrige. Fundet undervejs: hub'en
    fejlede ved første start, fordi signal-CA'en blev oprettet, men
    fejlen fra opslaget blev returneret; controlleren skrev spec'en
    tilbage, når den satte sin finalizer (`168h` blev til `168h0m0s`), og

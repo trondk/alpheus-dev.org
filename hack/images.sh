@@ -22,9 +22,7 @@ TAG="${TAG:-dev}"
 IMAGES=(
   "alpheus-agent alpheus/agent AGENT_IMAGE"
   "alpheus-controller alpheus/controller CONTROLLER_IMAGE"
-  "generate alpheus-test/generate GENERATE_IMAGE"
-  "filter alpheus-test/filter FILTER_IMAGE"
-  "sum alpheus-test/sum SUM_IMAGE"
+  "bench alpheus-test/bench BENCH_IMAGE"
 )
 
 mkdir -p "$OUT/bin" "$OUT/certs"
@@ -32,7 +30,7 @@ cp "$CA_FILE" "$OUT/certs/ca.crt"
 cd "$ROOT"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$OUT/bin/" \
   ./cmd/alpheus-agent ./cmd/alpheus-controller \
-  ./test/components/generate ./test/components/filter ./test/components/sum
+  ./test/components/bench
 
 : > "$OUT/images.env.tmp"
 for entry in "${IMAGES[@]}"; do

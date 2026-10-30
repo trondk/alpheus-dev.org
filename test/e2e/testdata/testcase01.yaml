@@ -1,25 +1,27 @@
-# testcase01 (SPEC 12.1): MCPipe's sales.csv, filtered for Denmark and
-# summed per product. hack/e2e.sh sets the images, pinned by digest, and the
-# test creates the Secret alpheus-s3 in its namespace.
+# testcase01 (SPEC 12.1): source -> pass -> sink with the bench component,
+# to see how the system performs. Each chunk goes through object storage
+# twice. hack/e2e.sh sets the image, pinned by digest, the test sets the
+# sizes, and the test creates the Secret alpheus-s3 in its namespace.
 apiVersion: alpheus-dev.org/v1alpha1
 kind: StreamRun
 metadata:
   name: testcase01
 spec:
   steps:
-    - name: generate
-      image: ${GENERATE_IMAGE}
-      settings: {fixture: testcase01/sales.csv}
-    - name: filter
-      image: ${FILTER_IMAGE}
-      settings: {field: country, in: [DK, Denmark, Danmark], delimiter: ";", fold: true}
-    - name: sum
-      image: ${SUM_IMAGE}
-      settings: {group: product, delimiter: ";", decimal: ","}
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 1}
+    - name: pass
+      image: ${BENCH_IMAGE}
+      replicas: ${BENCH_PASS_REPLICAS}
+      settings: {role: pass}
+    - name: sink
+      image: ${BENCH_IMAGE}
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 1}
   edges:
-    - {from: generate, to: filter}
-    - {from: filter, to: sum}
-  chunks: {maxBytes: 16Mi, maxUnacked: 4}
+    - {from: source, to: pass}
+    - {from: pass, to: sink}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
   storage:
     endpoint: http://garage.storage.svc.cluster.local:3900
     bucket: alpheus-data

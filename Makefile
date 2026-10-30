@@ -1,4 +1,4 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-s3 test-agent-s3 vet images e2e
+.PHONY: all generate proto check-generated check-deps test test-crd test-s3 test-agent-s3 vet images e2e bench
 
 all: generate vet check-deps test
 
@@ -59,6 +59,12 @@ images:
 # runs the testcases in test/e2e against it.
 e2e:
 	hack/e2e.sh
+
+# Runs testcase01 alone, with the images from the last make e2e, to see how
+# the system performs. BENCH_CHUNKS, BENCH_SIZE, BENCH_PASS_REPLICAS and
+# BENCH_MAX_UNACKED change its sizes.
+bench:
+	SKIP_IMAGES=1 hack/e2e.sh -run TestTestcase01
 
 # Alpheus never reads a chunk's content, so it must not depend on Parquet or
 # Arrow (GO-101).

@@ -21,8 +21,7 @@ limitations under the License.
 // Environment:
 //
 //	KUBECONFIG                      the cluster
-//	GENERATE_IMAGE, FILTER_IMAGE,   the test components, pinned by digest
-//	SUM_IMAGE
+//	BENCH_IMAGE                     the test component, pinned by digest
 //	ALPHEUS_E2E_S3_ACCESS_KEY,      the keys put in each run's Secret
 //	ALPHEUS_E2E_S3_SECRET_KEY
 //	ALPHEUS_E2E_S3_ENDPOINT         where this machine reaches the storage,
@@ -30,6 +29,12 @@ limitations under the License.
 //	                                which is only reachable in the cluster
 //	ALPHEUS_E2E_S3_CA_FILE          CA for that endpoint
 //	ALPHEUS_E2E_KEEP=1              keep the namespace of a failed test
+//	ALPHEUS_E2E_OUT                 folder for each run's measurements as
+//	                                JSON; not set means they are only logged
+//
+// testcase01 also reads BENCH_CHUNKS, BENCH_SIZE (bytes per chunk),
+// BENCH_PASS_REPLICAS and BENCH_MAX_UNACKED, with defaults 64, 4 MiB, 1
+// and 4.
 package e2e
 
 import (
@@ -37,6 +42,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +57,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"alpheus-dev.org/alpheus/api/v1alpha1"
+	"alpheus-dev.org/alpheus/internal/chunk"
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
@@ -206,23 +213,47 @@ func (e *env) storeFor(res v1alpha1.ResultStatus) store.Store {
 	return s
 }
 
-// objects returns the content of every object under prefix whose key
-// contains part, in key order.
-func objects(t *testing.T, s store.Store, prefix, part string) []byte {
+// resultChunks reads every replica's manifest under a result's prefix and
+// returns its chunks' content in order.
+func resultChunks(t *testing.T, s store.Store, prefix string) []byte {
 	t.Helper()
 	var all bytes.Buffer
 	for key, err := range s.List(t.Context(), prefix) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(key[len(prefix):], part) {
+		if path.Base(key) != "manifest.json" {
 			continue
 		}
 		data, err := store.ReadAll(t.Context(), s, key)
 		if err != nil {
 			t.Fatal(err)
 		}
-		all.Write(data)
+		m, err := chunk.ParseManifest(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !m.EOS {
+			t.Errorf("%s has no EOS", key)
+		}
+		for _, c := range m.Chunks {
+			data, err := store.ReadAll(t.Context(), s, fmt.Sprintf("%spart-%06d.%s", strings.TrimSuffix(key, "manifest.json"), c.N, c.Ext))
+			if err != nil {
+				t.Fatal(err)
+			}
+			all.Write(data)
+		}
 	}
 	return all.Bytes()
+}
+
+func stepStatus(t *testing.T, r *v1alpha1.StreamRun, name string) v1alpha1.StepStatus {
+	t.Helper()
+	for _, s := range r.Status.Steps {
+		if s.Name == name {
+			return s
+		}
+	}
+	t.Fatalf("no status for step %s", name)
+	return v1alpha1.StepStatus{}
 }

@@ -72,6 +72,7 @@ With the cluster running:
 | `make test-s3` | Runs the storage tests against Garage over HTTPS |
 | `make test-agent-s3` | Runs the agent pipeline against Garage, with signals through the hub and a restart |
 | `make e2e` | Builds the images, pushes them to Zot, installs the controller and runs the end-to-end tests |
+| `make bench` | Runs testcase01 alone and saves its measurements |
 
 ## End-to-end tests
 
@@ -82,20 +83,46 @@ and the controller with those images, pinned by digest, and runs the
 tests in {{< repolink "test/e2e/" >}} as ordinary Go tests against the
 cluster.
 
-The first test case, testcase01, is a sales file in Danish number format,
-filtered for Denmark and summed per product:
+The first test case, testcase01, is simple, and also shows how the
+system performs. Three steps run the test component `bench`:
 
-1. `generate` writes the input file as one chunk.
-2. `filter` keeps the Danish rows: `DK`, `Denmark`, `Danmark` and ` dk `.
-3. `sum` adds up quantity and amount per product, rejects a row with a
-   missing amount and logs it, and writes the result at the end.
+```
+source ──> pass ──> sink ──> result
+```
 
-The test waits for the run to succeed, then fetches the result using
-only what the run's status says about it, and compares it byte for byte
-with a golden file in {{< repolink "test/fixtures/" >}}. It also checks
-the counters and the error log: rows read, excluded and rejected, and
-the total.
+1. `source` writes 64 chunks of 4 MiB. Each starts with its number and
+   the time it was written, followed by bytes from a generator with a
+   fixed seed.
+2. `pass` copies each chunk unchanged, so every chunk goes through
+   object storage twice.
+3. `sink` checks every byte against the generator and notes when the
+   chunk arrived. At the end it writes one line per chunk as the result.
 
-Run it again without rebuilding the images with
+The test waits for the run to succeed and fetches the result using only
+what the run's status says about it. A missing, repeated or changed
+chunk fails the run. Then it reports:
+
+| Measurement | From |
+|---|---|
+| Startup | The run is created until every component runs |
+| Stream | The first chunk is written until the last is received |
+| Total | The run is created until it has succeeded |
+| Throughput | Bytes divided by the stream's duration |
+| Latency | Per chunk, from written to received: median, 95th percentile and maximum |
+
+On the single-node test cluster, with the images already pulled, startup
+takes about a second and data moves at about 40 MB/s through the two
+hops.
+
+`make bench` runs testcase01 alone with the images from the last
+`make e2e`, and saves the measurements as JSON in `_out/bench/`. Change
+its sizes with `BENCH_CHUNKS`, `BENCH_SIZE` (bytes per chunk),
+`BENCH_PASS_REPLICAS` and `BENCH_MAX_UNACKED`:
+
+```console
+$ BENCH_CHUNKS=256 BENCH_PASS_REPLICAS=4 make bench
+```
+
+Run every end-to-end test again without rebuilding the images with
 `SKIP_IMAGES=1 hack/e2e.sh`. Images are built with fixed timestamps, so
 unchanged code gives the same digests.
