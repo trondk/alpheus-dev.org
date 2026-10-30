@@ -56,8 +56,8 @@ type StreamRun struct {
 // +kubebuilder:validation:XValidation:rule="has(self.chunks) == has(oldSelf.chunks) && (!has(self.chunks) || self.chunks == oldSelf.chunks)",message="chunks is immutable"
 // +kubebuilder:validation:XValidation:rule="self.storage == oldSelf.storage",message="storage is immutable"
 // +kubebuilder:validation:XValidation:rule="has(self.signals) == has(oldSelf.signals) && (!has(self.signals) || self.signals == oldSelf.signals)",message="signals is immutable"
-// +kubebuilder:validation:XValidation:rule="has(self.ttlAfterFinished) == has(oldSelf.ttlAfterFinished) && (!has(self.ttlAfterFinished) || self.ttlAfterFinished == oldSelf.ttlAfterFinished)",message="ttlAfterFinished is immutable"
-// +kubebuilder:validation:XValidation:rule="has(self.resultsTTL) == has(oldSelf.resultsTTL) && (!has(self.resultsTTL) || self.resultsTTL == oldSelf.resultsTTL)",message="resultsTTL is immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.ttlAfterFinished) == has(oldSelf.ttlAfterFinished) && (!has(self.ttlAfterFinished) || duration(self.ttlAfterFinished) == duration(oldSelf.ttlAfterFinished))",message="ttlAfterFinished is immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.resultsTTL) == has(oldSelf.resultsTTL) && (!has(self.resultsTTL) || duration(self.resultsTTL) == duration(oldSelf.resultsTTL))",message="resultsTTL is immutable"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.cancel) || !oldSelf.cancel || (has(self.cancel) && self.cancel)",message="cancel cannot be undone"
 // +kubebuilder:validation:XValidation:rule="!has(self.edges) || self.edges.all(e, self.steps.exists(s, s.name == e.from) && self.steps.exists(s, s.name == e.to))",message="every edge must go from and to an existing step"
 type StreamRunSpec struct {

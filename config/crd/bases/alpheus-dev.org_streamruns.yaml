@@ -458,10 +458,11 @@ spec:
                 || self.signals == oldSelf.signals)
             - message: ttlAfterFinished is immutable
               rule: has(self.ttlAfterFinished) == has(oldSelf.ttlAfterFinished) &&
-                (!has(self.ttlAfterFinished) || self.ttlAfterFinished == oldSelf.ttlAfterFinished)
+                (!has(self.ttlAfterFinished) || duration(self.ttlAfterFinished) ==
+                duration(oldSelf.ttlAfterFinished))
             - message: resultsTTL is immutable
               rule: has(self.resultsTTL) == has(oldSelf.resultsTTL) && (!has(self.resultsTTL)
-                || self.resultsTTL == oldSelf.resultsTTL)
+                || duration(self.resultsTTL) == duration(oldSelf.resultsTTL))
             - message: cancel cannot be undone
               rule: '!has(oldSelf.cancel) || !oldSelf.cancel || (has(self.cancel)
                 && self.cancel)'
