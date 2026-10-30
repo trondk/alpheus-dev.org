@@ -1,18 +1,18 @@
 ---
 title: Alpheus
-description: Alpheus streams Parquet data between containers on Kubernetes, with nothing but object storage in between.
+description: Alpheus streams files between containers on Kubernetes, with nothing but object storage in between.
 myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, disappears underground and rises again in Sicily. Alpheus does the same with data: it leaves one step, travels out of sight through object storage, and appears in the next."
 ---
 
 ## What it does
 
-- Every step runs at the same time; data moves as Parquet chunks in S3.
+- Every step runs at the same time; data moves as chunks in S3, in any file format.
 - No message broker for data, only Kubernetes and an S3 endpoint.
 - The same component runs in batch and in streaming.
 
 ## A minimal flow
 
-A run is one `StreamRun` resource. {{< planned >}}The API exists as a CRD, but nothing runs it yet.{{< /planned >}}
+A run is one `StreamRun` resource. {{< planned >}}The controller and the agent exist and pass their tests against a Kubernetes API server and S3 storage, but have not run a flow on a cluster yet. The `alpheus` CLI comes later; until then `kubectl apply -f flow.yaml` does the same.{{< /planned >}}
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1

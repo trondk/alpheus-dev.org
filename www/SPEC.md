@@ -65,12 +65,12 @@ saglig, konkret og uden salgssprog.
 
 I rækkefølge, i én spalte:
 
-1. **Navn og én sætning.** "Alpheus streams Parquet data between
-   containers on Kubernetes, with nothing but object storage in between."
+1. **Navn og én sætning.** "Alpheus streams files between containers
+   on Kubernetes, with nothing but object storage in between."
 2. **Floden.** Sidens signatur (se 4.4): en linje, der løber, forsvinder
    under en horisont og dukker op igen, med en kort tekst om myten.
 3. **Hvad det gør**, i tre konkrete udsagn:
-   - Every step runs at the same time; data moves as Parquet chunks in S3.
+   - Every step runs at the same time; data moves as chunks in S3, in any file format.
    - No message broker for data, only Kubernetes and an S3 endpoint.
    - The same component runs in batch and in streaming.
 4. **Et minimalt eksempel**: en StreamRun på 15–20 linjer og
@@ -152,8 +152,8 @@ Alpheus gør med data mellem trin.
 
 ```
  Alpheus
- Streams Parquet data between containers on Kubernetes,
- with nothing but object storage in between.
+ Streams files between containers on Kubernetes, with
+ nothing but object storage in between.
 
    ~~~~~~~~~~~\                                  /~~~~~~~~~>
  ______________\________________________________/____________
