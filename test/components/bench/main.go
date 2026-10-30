@@ -14,13 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command bench is the test component of testcase01, testcase02 and
-// testcase03 (SPEC 12.1). It has three roles:
+// Command bench is the test component of testcase01 to testcase06 (SPEC
+// 12.1). It has three roles:
 //
 //   - source writes chunks chunks of size bytes. Each starts with a header
 //     of 16 bytes, the chunk's number and the time it was started, as
 //     little-endian uint64 and Unix nanoseconds, followed by bytes from a
-//     ChaCha8 generator seeded by seed and the number.
+//     ChaCha8 generator seeded by seed and the number. With fixed, the
+//     time is 0, so every attempt makes the same chunks, as a restarted
+//     source must (GO-92).
 //
 //   - pass copies each input chunk to the default output unchanged. With
 //     drop, it drops the chunks whose number in its input stream is a
@@ -38,7 +40,8 @@ limitations under the License.
 //
 // Settings: {"role": "source", "chunks": 64, "size": 4194304, "seed": 1}.
 // sink needs the same chunks, size and seed as source, and takes ports,
-// which defaults to ["default"], and skip; pass takes only drop.
+// which defaults to ["default"], and skip; pass takes drop. Both take
+// delay, milliseconds to wait before each input chunk, to make a step slow.
 //
 // It counts the units chunks and bytes.
 package main
@@ -73,6 +76,10 @@ type settings struct {
 	// and Skip makes sink expect that; 0 means none.
 	Drop int64 `json:"drop"`
 	Skip int64 `json:"skip"`
+	// Delay is milliseconds pass and sink wait before each input chunk.
+	Delay int `json:"delay"`
+	// Fixed makes source write the time 0 in the header.
+	Fixed bool `json:"fixed"`
 }
 
 func main() {
@@ -87,8 +94,8 @@ func handle(ctx context.Context, in sdk.Input, out sdk.Output) error {
 	if s.Role != "pass" && (s.Chunks < 1 || s.Size < headerSize) {
 		return fmt.Errorf("%w: %s needs chunks of at least 1 and size of at least %d bytes", sdk.ErrUsage, s.Role, headerSize)
 	}
-	if s.Drop < 0 || s.Skip < 0 {
-		return fmt.Errorf("%w: drop and skip must not be negative", sdk.ErrUsage)
+	if s.Drop < 0 || s.Skip < 0 || s.Delay < 0 {
+		return fmt.Errorf("%w: drop, skip and delay must not be negative", sdk.ErrUsage)
 	}
 	switch s.Role {
 	case "source":
@@ -117,7 +124,9 @@ func source(ctx context.Context, s settings, out sdk.Output) error {
 		}
 		var h [headerSize]byte
 		binary.LittleEndian.PutUint64(h[0:], uint64(n))
-		binary.LittleEndian.PutUint64(h[8:], uint64(time.Now().UnixNano()))
+		if !s.Fixed {
+			binary.LittleEndian.PutUint64(h[8:], uint64(time.Now().UnixNano()))
+		}
 		if _, err := f.Write(h[:]); err != nil {
 			return err
 		}
@@ -133,6 +142,19 @@ func source(ctx context.Context, s settings, out sdk.Output) error {
 	return nil
 }
 
+// wait waits ms milliseconds, or until ctx is done.
+func wait(ctx context.Context, ms int) error {
+	if ms == 0 {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Duration(ms) * time.Millisecond):
+		return nil
+	}
+}
+
 // skipped tells whether chunk n is a multiple of every, when every is set.
 func skipped(n, every int64) bool {
 	return every > 0 && n%every == 0
@@ -141,6 +163,9 @@ func skipped(n, every int64) bool {
 func pass(ctx context.Context, s settings, in sdk.Input, out sdk.Output) error {
 	for c, err := range in.Chunks(ctx) {
 		if err != nil {
+			return err
+		}
+		if err := wait(ctx, s.Delay); err != nil {
 			return err
 		}
 		if skipped(c.N, s.Drop) {
@@ -211,6 +236,9 @@ func sink(ctx context.Context, s settings, in sdk.Input) error {
 			return err
 		}
 		received := time.Now().UnixNano()
+		if err := wait(ctx, s.Delay); err != nil {
+			return err
+		}
 		t, err := check(s, c.Path)
 		if err != nil {
 			return fmt.Errorf("chunk %d from %s/%d: %w", c.N, c.Step, c.Replica, err)

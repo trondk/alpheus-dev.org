@@ -37,8 +37,8 @@ import (
 	"alpheus-dev.org/alpheus/internal/store"
 )
 
-// bench is a run of the bench component (testcase01, testcase02 and
-// testcase03) and what it measured.
+// bench is a run of the bench component (testcase01 to testcase06) and
+// what it measured.
 type bench struct {
 	Testcase   string         `json:"testcase"`
 	Time       time.Time      `json:"time"`
@@ -54,7 +54,9 @@ type bench struct {
 	// stream.
 	MBPerSecond float64 `json:"mbPerSecond"`
 	// Latency is per port of the sink.
-	Latency map[string]latency `json:"latency"`
+	Latency map[string]latency `json:"latency,omitempty"`
+	// Kills are the pods the test deleted during the run.
+	Kills []string `json:"kills,omitempty"`
 
 	// run, timings and store are the finished run, the sink's result and
 	// the storage it is in.
@@ -89,13 +91,18 @@ func newBench(t *testing.T, testcase string, replicas map[string]int) *bench {
 	return b
 }
 
-// start creates the testcase's StreamRun, waits for it to succeed, and reads
-// the sink's result with status.results alone (GO-82). It expects want
-// chunks on each of ports.
+// start creates the testcase's StreamRun and finishes it.
 func (b *bench) start(e *env, want int, ports ...string) {
+	b.t.Helper()
+	b.finish(e, e.create(b.Testcase), want, ports...)
+}
+
+// finish waits for the run to succeed, and reads the sink's result with
+// status.results alone (GO-82). It expects want chunks on each of ports.
+func (b *bench) finish(e *env, r *v1alpha1.StreamRun, want int, ports ...string) {
 	t := b.t
 	t.Helper()
-	r := e.wait(e.create(b.Testcase), 15*time.Minute)
+	r = e.wait(r, 15*time.Minute)
 	if r.Status.Phase != v1alpha1.RunSucceeded {
 		t.Fatalf("phase %s: %s", r.Status.Phase, r.Status.Message)
 	}
@@ -202,6 +209,19 @@ func (b *bench) consumed(from ...string) map[string][]*chunk.Manifest {
 	return last
 }
 
+// countsAtMost checks that no step counted more than want chunks.
+func (b *bench) countsAtMost(want map[string]int) {
+	b.t.Helper()
+	for step, chunks := range want {
+		s := stepStatus(b.t, b.run, step)
+		if s.Counts["chunks"] > int64(chunks) || s.Counts["bytes"] > int64(chunks)*b.ChunkBytes {
+			b.t.Errorf("%s counted %v, want at most %d chunks of %d bytes", step, s.Counts, chunks, b.ChunkBytes)
+		} else if s.Counts["chunks"] < int64(chunks) {
+			b.t.Logf("%s counted %d chunks of %d: the rest were lost in a crash (SPEC 16, GO-115)", step, s.Counts["chunks"], chunks)
+		}
+	}
+}
+
 func (b *bench) measure(e *env) {
 	// Kubernetes times have whole seconds; the chunks' times nanoseconds.
 	created := b.run.CreationTimestamp.Time
@@ -211,7 +231,8 @@ func (b *bench) measure(e *env) {
 	if b.run.Status.FinishedAt != nil {
 		b.TotalSeconds = b.run.Status.FinishedAt.Sub(created).Seconds()
 	}
-	if len(b.timings) == 0 {
+	// A fixed source writes no time, so there is nothing to measure.
+	if len(b.timings) == 0 || b.timings[0].written == 0 {
 		return
 	}
 	perPort := map[string][]float64{}
@@ -242,12 +263,19 @@ func (b *bench) report() {
 	t.Logf("%s: %d chunks of %s, maxUnacked %d, replicas: %s",
 		b.Testcase, b.Chunks, mib(b.ChunkBytes), b.MaxUnacked, strings.Join(steps, ", "))
 	t.Logf("  startup    %6.1f s    run created until every component runs", b.StartupSeconds)
-	t.Logf("  stream     %6.2f s    first chunk written until last received", b.StreamSeconds)
+	if b.StreamSeconds > 0 {
+		t.Logf("  stream     %6.2f s    first chunk written until last received", b.StreamSeconds)
+	}
 	t.Logf("  total      %6.1f s    run created until Succeeded", b.TotalSeconds)
-	t.Logf("  throughput %6.1f MB/s received by the sink", b.MBPerSecond)
+	if b.MBPerSecond > 0 {
+		t.Logf("  throughput %6.1f MB/s received by the sink", b.MBPerSecond)
+	}
 	for _, port := range slices.Sorted(maps.Keys(b.Latency)) {
 		l := b.Latency[port]
 		t.Logf("  latency    p50 %.0f ms, p95 %.0f ms, max %.0f ms per chunk to port %s", l.P50, l.P95, l.Max, port)
+	}
+	if len(b.Kills) > 0 {
+		t.Logf("  killed     %d pods: %s", len(b.Kills), strings.Join(b.Kills, ", "))
 	}
 
 	dir := os.Getenv("ALPHEUS_E2E_OUT")

@@ -260,6 +260,7 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 	slices.SortFunc(files, func(x, y *outFile) int { return int(x.seq - y.seq) })
 
 	changed := map[*target]bool{}
+	kept := false
 	var srcRef *chunk.Source
 	if src != nil {
 		srcRef = &chunk.Source{Edge: src.s.in.Edge, Replica: src.s.p, N: src.meta.N}
@@ -281,6 +282,7 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 			if !keep {
 				continue
 			}
+			kept = true
 			c.N = t.m.NextN()
 			if err := a.upload(ctx, t.stream.ChunkKey(c.N, c.Ext), f); err != nil {
 				return err
@@ -339,6 +341,24 @@ func (a *Agent) commit(ctx context.Context, src *inChunk, files []*outFile, r *r
 	chunkName := ""
 	if src != nil {
 		chunkName = fmt.Sprintf("%s/%s/%d", src.s.in.Port, src.s.in.From, src.meta.N)
+	}
+	switch {
+	case a.source() && len(files) > 0 && !kept:
+		// An earlier attempt committed this chunk, and what was reported
+		// with it (GO-92, GO-115).
+		return nil
+	case stateful && !final:
+		a.mu.Lock()
+		a.obs.held.merge(r, chunkName)
+		a.mu.Unlock()
+		return nil
+	case stateful:
+		a.mu.Lock()
+		held := a.obs.held
+		a.obs.held = &report{counts: map[string]int64{}}
+		a.mu.Unlock()
+		held.merge(r, "")
+		r = held
 	}
 	return a.writeObservations(ctx, r, chunkName)
 }

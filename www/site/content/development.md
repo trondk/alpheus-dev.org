@@ -25,7 +25,10 @@ also needs [buf](https://buf.build/docs/installation).
 `make test` needs no cluster and no S3. The agents and components run in
 one process against storage in memory, through pipelines of a few
 steps, one of them with ten replicas, and through fan-out and fan-in. The
-tests crash steps halfway and check that the result is still right. The
+tests crash steps halfway and check that the result is still right. One
+of them stops the pipeline at every write to storage in turn, both before
+and after the write lands, then starts it again and checks that nothing
+is missing and nothing is there twice. The
 controller's tests run against a real Kubernetes API server and etcd
 from envtest, which `make test` downloads the first time.
 
@@ -153,6 +156,31 @@ with `BENCH_CHUNKS`, `BENCH_SIZE` (bytes per chunk) and
 ```console
 $ BENCH_CHUNKS=256 BENCH_PASS_REPLICAS=4 make bench
 ```
+
+## Restarts, backpressure and chaos
+
+Three more test cases check that a run survives failures. They kill pods
+by deleting them with no grace period, so the agent and the component
+die together, as when a node fails. Alpheus starts a new attempt, and
+the test checks the result as before.
+
+- testcase04 runs `source`, `pass` and `sink` three times and kills one
+  of them halfway each time. A source starts over and the agent skips
+  the chunks it already has, after checking that they are the same. A
+  step in the middle carries on from the first chunk it had not
+  finished. `sink` keeps its state in memory, so it reads all of its
+  input again. Every chunk must arrive exactly once, and the counters
+  must be exact.
+- testcase05 makes a step wait 500 ms before each chunk and samples
+  object storage while the run goes. No replica of the slow step may
+  ever have more chunks waiting than `maxUnacked`, and the slow step
+  must set the pace for the whole run.
+- testcase06 runs testcase02's fan-out and fan-in and kills a random pod
+  about every three seconds until the run is done, typically a dozen
+  pods. The result must still be correct. `BENCH_CHAOS_SEED` repeats a
+  run's choice of pods.
+
+`make e2e` runs them with the others.
 
 Run every end-to-end test again without rebuilding the images with
 `SKIP_IMAGES=1 hack/e2e.sh`. Images are built with fixed timestamps, so

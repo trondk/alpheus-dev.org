@@ -1,0 +1,41 @@
+# testcase06 (SPEC 12.1): chaos, in testcase02's shape: source's output
+# goes to both left and right, and sink reads both on the ports left and
+# right. The test kills random pods during the run, so source is fixed
+# (GO-92) and every step may restart often. hack/e2e.sh sets the image,
+# pinned by digest, the test sets the sizes, and the test creates the
+# Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase06
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 6, fixed: true}
+      maxRestarts: 100
+    - name: left
+      image: ${BENCH_IMAGE}
+      replicas: ${BENCH_LEFT_REPLICAS}
+      settings: {role: pass}
+      maxRestarts: 100
+    - name: right
+      image: ${BENCH_IMAGE}
+      replicas: ${BENCH_RIGHT_REPLICAS}
+      settings: {role: pass}
+      maxRestarts: 100
+    - name: sink
+      image: ${BENCH_IMAGE}
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 6, ports: [left, right]}
+      maxRestarts: 100
+  edges:
+    - {from: source, to: left}
+    - {from: source, to: right}
+    - {from: left, to: sink, port: left}
+    - {from: right, to: sink, port: right}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

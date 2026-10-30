@@ -74,6 +74,23 @@ type logEntry struct {
 type report struct {
 	counts  map[string]int64
 	entries []*componentpb.LogEntry
+	// chunks names the input chunk of each entry, for a report held over
+	// several chunks; nil means the chunk the report is committed with.
+	chunks []string
+}
+
+// merge adds r, reported for the input chunk chunkName, to h.
+func (h *report) merge(r *report, chunkName string) {
+	if r == nil {
+		return
+	}
+	for u, n := range r.counts {
+		h.counts[u] += n
+	}
+	for _, e := range r.entries {
+		h.entries = append(h.entries, e)
+		h.chunks = append(h.chunks, chunkName)
+	}
 }
 
 func (r *report) empty() bool { return r == nil || (len(r.counts) == 0 && len(r.entries) == 0) }
@@ -85,12 +102,17 @@ type observer struct {
 	seq     int64 // last Observe message received
 	err     error // the first invalid report; fails the next commit
 	state   Observations
+	// held is what a stateful step reported for chunks it is done with.
+	// It is committed with the OnEOS output, since a restart before that
+	// reads every chunk again (GO-95, GO-115, GO-118).
+	held *report
 }
 
 func newObserver(cfg Config) *observer {
 	return &observer{
 		units:   map[string]bool{},
 		pending: map[int64]*report{},
+		held:    &report{counts: map[string]int64{}},
 		state: Observations{
 			Version:  ObservationsVersion,
 			Run:      cfg.Run,
@@ -173,7 +195,11 @@ func (a *Agent) writeObservations(ctx context.Context, r *report, chunkName stri
 		state.Counts[u] += n
 	}
 	var buf bytes.Buffer
-	for _, e := range r.entries {
+	for i, e := range r.entries {
+		name := chunkName
+		if r.chunks != nil {
+			name = r.chunks[i]
+		}
 		line, err := json.Marshal(logEntry{
 			Time:    time.Unix(0, e.Time).UTC(),
 			Level:   e.Level,
@@ -182,7 +208,7 @@ func (a *Agent) writeObservations(ctx context.Context, r *report, chunkName stri
 			Fields:  validFields(e.Fields),
 			Step:    a.cfg.Step,
 			Replica: a.cfg.Replica,
-			Chunk:   chunkName,
+			Chunk:   name,
 		})
 		if err != nil || len(line) > maxLogEntryBytes || state.Errors+state.Warnings >= maxLogEntries {
 			state.ErrorsDropped++

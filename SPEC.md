@@ -85,7 +85,7 @@ alpheus/
 ├── charts/alpheus/        Helm-chart
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01, testcase02 og testcase03 (findes), og fejltests
+│   ├── e2e/               testcase01 til testcase06 (findes), og fejltests
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── docs/                  kilde til dokumentationen på hjemmesiden
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
@@ -563,7 +563,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` og `stomp` | fælles suite, Artemis i en container |
-| E2E | testcase01, testcase02, testcase03, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01 til testcase06, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -573,7 +573,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | GO-57 | SKAL | `go test -race` kører på alle pakker. |
 | GO-58 | BØR | Fuzz-tests for manifest-parsing i agenten. |
 | GO-74 | SKAL | Genstartstests slår agenten ihjel mellem hvert trin i commit-rækkefølgen (7.3 og 7.4) og kontrollerer, at output hverken mangler eller er dubleret. |
-| GO-100 | SKAL | En genstartstest slår `sum`-trinnet ihjel, efter at det har læst halvdelen af sine input-chunks, men før EOS. Resultatet skal stadig være lig med summen beregnet direkte fra `generate`s data (GO-81). Testen beviser GO-95. |
+| GO-100 | SKAL | En genstartstest slår det tilstandsfulde `sink`-trin ihjel, efter at det har acket halvdelen af sine input-chunks, men før EOS. Resultatet skal stadig have hver chunk præcis én gang og uændret, og tællerne skal være præcise. Testen beviser GO-95. |
 
 ### 12.1 Testcases
 
@@ -680,6 +680,64 @@ forventer kun de øvrige chunks.
 | GO-84 | SKAL | Testen læser de ti `filter`-replikaers ack-filer (GO-36) og kontrollerer, at mængderne af ackede chunks er disjunkte, at deres forening er præcis alle chunks, og at chunk n ligger hos replika n mod 10. Testen afhænger ikke af logs. |
 | GO-85 | SKAL | Testen kontrollerer, at replika 0's udgående manifest har nul chunks, `last: 0` og `eos: true`, at de andre replikaer skrev én chunk pr. ackede chunk, og at `sink` alligevel er nået til EOS med alle ti strømme forbrugt. |
 | GO-82 | SKAL | Testen henter resultatet med oplysningerne i `status.results` og intet andet, så den også tester, at de er nok. |
+
+**testcase04: genstart af hver slags trin.**
+
+```
+source (fixed) ──> pass ──> sink (delay: 100)
+```
+
+Tre runs, der hver slår ét trins pod ihjel med det samme (uden
+grace period), så agent og komponent dør sammen som ved et
+node-nedbrud. Controlleren ser pod'en forsvinde og starter et nyt
+forsøg. Testen vælger tidspunktet ud fra manifester og ack-filer i S3:
+
+| Run | Slås ihjel, når | Beviser |
+|---|---|---|
+| `source` | Den har committet en fjerdedel af sine chunks | En deterministisk kilde fortsætter fra næste chunk efter at have sammenlignet dem, den laver igen (GO-92) |
+| `pass` | Den har committet halvdelen af sit output | Den fortsætter fra første ubehandlede chunk, sletter output, der aldrig blev committet, og intet står to gange (GO-37, GO-70) |
+| `sink` | Den har acket halvdelen af sit input, før EOS | Et tilstandsfuldt trin læser alt sit input igen (GO-95, GO-100) |
+
+`source` har indstillingen `fixed`, der skriver tiden 0 i chunkens
+header, så hvert forsøg laver de samme chunks; ellers ville agenten med
+rette afvise kilden som ikke-deterministisk. `sink` har `delay`, så
+testen når at handle. Testen kontrollerer, at runnet lykkes, at kun det
+dræbte trin har én genstart, at `sink` fik hver chunk præcis én gang og
+uændret, at hver strøm har chunk 1–64 og EOS, at der ikke ligger
+chunk-objekter, som aldrig blev committet, og at tællerne er præcise.
+
+**testcase05: backpressure.**
+
+```
+source ──> slow (pass, 2 replikaer, delay: 500) ──> sink
+```
+
+Mens runnet kører, læser testen ca. fem gange i sekundet `source`s
+manifest og derefter `slow`s to ack-filer. For hver replika må antallet
+af chunks, der er tildelt den, men ikke acket, aldrig overstige
+`maxUnacked` (GO-35). Manifestet læses først, så en prøve kan tælle for
+få, aldrig for mange. Hver replika skal også nå grænsen, ellers blev
+backpressure ikke testet. Den langsomste replika sætter tempoet (GO-94),
+så strømmen tager mindst chunks × delay / replikaer. Replikaerne og
+ventetiden ændres med `BENCH_SLOW_REPLICAS` og `BENCH_SLOW_MS`.
+
+**testcase06: kaos.**
+
+testcase02's form med `fixed` kilde og `maxRestarts: 100`. Ca. hvert
+tredje sekund slår testen en tilfældig pod i runnet ihjel, til runnet er
+færdigt (GO-56). Ud over testcase02's kontroller må der ikke ligge
+chunk-objekter, som aldrig blev committet. Tællerne må være for lave,
+men aldrig for høje (se GO-115 i 16). `BENCH_CHAOS_SEED` vælger
+pod'erne, så en fejl kan gentages; testen logger den.
+
+**Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
+rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører
+`TestCrashAtEveryWrite` pipelinen i hukommelsen og lader skrivning
+nummer k fejle for hvert k i et run, både som en skrivning, der aldrig
+nåede frem, og som en, der nåede frem, men hvis svar gik tabt. Herefter
+fejler alle skrivninger, som om hele runnet døde. Så køres alle
+replikaer igen som forsøg 2, og resultatet skal være uden manglende og
+dublerede data.
 
 ### 12.2 Testmiljø (Vagrant)
 
@@ -791,7 +849,17 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    `filter`-replikaer på én node. testcase03 blev bygget med
    `bench`-komponenten i stedet for den oprindelige salgsrapport i CSV,
    så testene stadig ikke afhænger af et dataformat.
-8. Genstart, backpressure og kaos-test.
+8. Genstart, backpressure og kaos-test. *Færdig*: testcase04,
+   testcase05 og testcase06 kører på testklyngen (12.1), og
+   `TestCrashAtEveryWrite` kører med `make test`. Fundet undervejs: en
+   genstartet kilde talte de chunks, agenten kasserer (GO-92), med
+   igen, og et tilstandsfuldt trin talte alt sit input igen efter en
+   genstart; dets fejllog ville også have stået to gange. Et
+   tilstandsfuldt trin holder nu tællere og fejllog tilbage til
+   `OnEOS`-outputtet er committet, og en kasseret chunk fra en kilde
+   committer intet (GO-95, GO-115, GO-118). Tilbage står, at tællere kan
+   mangle efter et nedbrud mellem de udgående manifester og tællerne
+   (16).
 9. `stomp`-driveren.
 10. CLI, Helm-chart og første udgivelse `v0.1.0`.
 
@@ -813,6 +881,9 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
   efter de udgående manifester, så de kan mangle, men aldrig står to
   gange. Præcise tal kræver, at de står i selve commit-skrivningen, fx
   i de udgående manifester ved siden af `consumed`.
+  `TestCrashAtEveryWrite` viser det: et nedbrud lige efter de udgående
+  manifester mister den chunks tællere, og et nedbrud lige efter et
+  tilstandsfuldt trins sidste manifest mister alle dets tællere.
 - Et trin, der hedder `errors`, får resultater under
   `results/<run>/<uid>/errors/`, samme sted som fejlloggen. Skal navnet
   afvises i CRD'en, eller skal fejlloggen flyttes (fx til `_errors/`)?

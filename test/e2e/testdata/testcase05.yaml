@@ -1,0 +1,29 @@
+# testcase05 (SPEC 12.1): backpressure. slow waits before each chunk, so
+# source must stop when a slow replica has maxUnacked chunks it has not
+# acked. hack/e2e.sh sets the image, pinned by digest, the test sets the
+# sizes, and the test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase05
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 5}
+    - name: slow
+      image: ${BENCH_IMAGE}
+      replicas: ${BENCH_SLOW_REPLICAS}
+      settings: {role: pass, delay: ${BENCH_SLOW_MS}}
+    - name: sink
+      image: ${BENCH_IMAGE}
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 5}
+  edges:
+    - {from: source, to: slow}
+    - {from: slow, to: sink}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

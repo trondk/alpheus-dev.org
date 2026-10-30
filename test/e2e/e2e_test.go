@@ -35,8 +35,10 @@ limitations under the License.
 // The testcases also read BENCH_CHUNKS, BENCH_SIZE (bytes per chunk) and
 // BENCH_MAX_UNACKED, with defaults 64, 4 MiB and 4, and
 // BENCH_<STEP>_REPLICAS for the steps between source and sink: PASS
-// (default 1) in testcase01, LEFT and RIGHT (3 and 2) in testcase02, and
-// FILTER (10) in testcase03.
+// (default 1) in testcase01, LEFT and RIGHT (3 and 2) in testcase02 and
+// testcase06, FILTER (10) in testcase03 and SLOW (2) in testcase05.
+// testcase05 reads BENCH_SLOW_MS (500), the slow step's delay per chunk,
+// and testcase06 BENCH_CHAOS_SEED, which picks the pods it kills.
 package e2e
 
 import (
@@ -49,6 +51,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -83,6 +86,7 @@ func setup(t *testing.T) *env {
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
+	ctrl.SetLogger(logr.Discard())
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
 		t.Fatal(err)

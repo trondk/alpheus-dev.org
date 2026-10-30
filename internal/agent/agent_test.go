@@ -51,7 +51,7 @@ const (
 )
 
 // generate is a source: parts chunks of "<country> <amount>" lines. Every
-// part has DK lines except every tenth, as in testcase03-replicas.
+// part has DK lines except every tenth.
 func generate(parts int) sdk.Handler {
 	return func(ctx context.Context, in sdk.Input, out sdk.Output) error {
 		for n := 1; n <= parts; n++ {
@@ -108,6 +108,7 @@ func filter(ctx context.Context, in sdk.Input, out sdk.Output) error {
 }
 
 // sum adds the amounts and writes the total to the result at EOS (GO-48).
+// It counts the lines it reads.
 func sum(ctx context.Context, in sdk.Input, out sdk.Output) error {
 	var total int64
 	in.OnEOS(func(ctx context.Context, out sdk.Output) error {
@@ -131,6 +132,7 @@ func sum(ctx context.Context, in sdk.Input, out sdk.Output) error {
 			_, amount, _ := strings.Cut(sc.Text(), " ")
 			n, _ := strconv.ParseInt(amount, 10, 64)
 			total += n
+			sdk.Count(ctx, "lines", 1)
 		}
 		r.Close()
 	}
@@ -279,6 +281,10 @@ func readAcks(t *testing.T, st store.Store, key string) []int64 {
 func observations(t *testing.T, st store.Store, step string, replica int) Observations {
 	t.Helper()
 	data, err := store.ReadAll(context.Background(), st, chunk.ErrorLogPrefix(testRun, testUID, step, replica)+"manifest.json")
+	if errors.Is(err, store.ErrNotFound) {
+		// Lost in a crash after the outgoing manifests (SPEC 16, GO-115).
+		return Observations{}
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,9 +295,17 @@ func observations(t *testing.T, st store.Store, step string, replica int) Observ
 	return o
 }
 
-// checkPipeline checks the outcome as testcase03-replicas does (GO-81,
-// GO-84, GO-85).
+// checkPipeline checks the outcome as testcase03 does (GO-81, GO-84,
+// GO-85), with exact counters.
 func checkPipeline(t *testing.T, st store.Store, parts, filters int) {
+	t.Helper()
+	checkOutcome(t, st, parts, filters, true)
+}
+
+// checkOutcome is checkPipeline. Without exact, the counters may be too
+// low but never too high: the agent writes them after the outgoing
+// manifests, so a crash in between loses them (SPEC 16, GO-115).
+func checkOutcome(t *testing.T, st store.Store, parts, filters int, exact bool) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -350,8 +364,17 @@ func checkPipeline(t *testing.T, st store.Store, parts, filters int) {
 		out += o.Counts["lines_out"]
 		warnings += o.Warnings
 	}
-	if in != int64(4*parts) || warnings != int64(2*(parts/10)) {
-		t.Errorf("filter counted %d lines in, %d warnings", in, warnings)
+	wantIn, wantWarnings := int64(4*parts), int64(2*(parts/10))
+	if exact && (in != wantIn || warnings != wantWarnings) || in > wantIn || warnings > wantWarnings {
+		t.Errorf("filter counted %d lines in, %d warnings, want %d and %d", in, warnings, wantIn, wantWarnings)
+	}
+	// A restarted source and the stateful sum see chunks again, which
+	// must not be counted again.
+	for step, want := range map[string]int64{"generate": int64(4 * parts), "sum": int64(2 * (parts - parts/10))} {
+		got := observations(t, st, step, 0).Counts["lines"]
+		if exact && got != want || got > want {
+			t.Errorf("%s counted %d lines, want %d", step, got, want)
+		}
 	}
 }
 
