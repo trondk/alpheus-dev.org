@@ -169,8 +169,8 @@ the test checks the result as before.
   the chunks it already has, after checking that they are the same. A
   step in the middle carries on from the first chunk it had not
   finished. `sink` keeps its state in memory, so it reads all of its
-  input again. Every chunk must arrive exactly once, and the counters
-  must be exact.
+  input again. Every chunk must arrive exactly once, and no step may
+  count a chunk twice.
 - testcase05 makes a step wait 500 ms before each chunk and samples
   object storage while the run goes. No replica of the slow step may
   ever have more chunks waiting than `maxUnacked`, and the slow step

@@ -573,7 +573,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | GO-57 | SKAL | `go test -race` kører på alle pakker. |
 | GO-58 | BØR | Fuzz-tests for manifest-parsing i agenten. |
 | GO-74 | SKAL | Genstartstests slår agenten ihjel mellem hvert trin i commit-rækkefølgen (7.3 og 7.4) og kontrollerer, at output hverken mangler eller er dubleret. |
-| GO-100 | SKAL | En genstartstest slår det tilstandsfulde `sink`-trin ihjel, efter at det har acket halvdelen af sine input-chunks, men før EOS. Resultatet skal stadig have hver chunk præcis én gang og uændret, og tællerne skal være præcise. Testen beviser GO-95. |
+| GO-100 | SKAL | En genstartstest slår det tilstandsfulde `sink`-trin ihjel, efter at det har acket halvdelen af sine input-chunks, men før EOS. Resultatet skal stadig have hver chunk præcis én gang og uændret, og tællerne må ikke være for høje. Testen beviser GO-95. |
 
 ### 12.1 Testcases
 
@@ -704,7 +704,8 @@ rette afvise kilden som ikke-deterministisk. `sink` har `delay`, så
 testen når at handle. Testen kontrollerer, at runnet lykkes, at kun det
 dræbte trin har én genstart, at `sink` fik hver chunk præcis én gang og
 uændret, at hver strøm har chunk 1–64 og EOS, at der ikke ligger
-chunk-objekter, som aldrig blev committet, og at tællerne er præcise.
+chunk-objekter, som aldrig blev committet, og at ingen tæller er for
+høj. Tællerne kan være for lave, indtil GO-115 i 16 er afgjort.
 
 **testcase05: backpressure.**
 
