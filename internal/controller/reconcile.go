@@ -1,0 +1,566 @@
+/*
+Copyright The Alpheus Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package controller reconciles StreamRuns (SPEC 6): it validates the
+// graph, runs one pod per replica of each step with the agent as a native
+// sidecar, restarts failed attempts, and keeps status up to date from the
+// pods and from what the agents committed in storage.
+package controller
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"alpheus-dev.org/alpheus/api/v1alpha1"
+	"alpheus-dev.org/alpheus/internal/chunk"
+	"alpheus-dev.org/alpheus/internal/store"
+)
+
+// Finalizer makes sure a run's storage prefix is deleted before the run
+// disappears (GO-20).
+const Finalizer = "alpheus-dev.org/cleanup"
+
+// agentRestartLimit is how often the agent sidecar may restart in place
+// before the attempt counts as failed.
+const agentRestartLimit = 3
+
+// Options configure the controller.
+type Options struct {
+	// AgentImage is the agent's image, pinned by digest; all steps use it
+	// (GO-24).
+	AgentImage string
+	// AllowTags lets component images be given without a digest, for
+	// development (GO-26).
+	AllowTags bool
+	// HubAddress is where agents reach the signal hub, such as
+	// "alpheus-signal-hub.alpheus-system.svc:7070". Empty means agents
+	// only poll.
+	HubAddress string
+	// Namespace is the controller's namespace, which holds the signal CA.
+	Namespace string
+	// NewStore opens a run's storage; nil means S3 with the run's Secret.
+	NewStore func(ctx context.Context, r *v1alpha1.StreamRun) (store.Store, error)
+	// StorageCAFile is a CA bundle for storage endpoints, or empty.
+	StorageCAFile string
+	// Resync is how often a running run's status is read again from
+	// storage; default 2s, which also keeps status patches to at most one
+	// a second (GO-22).
+	Resync time.Duration
+}
+
+// Reconciler reconciles StreamRuns.
+type Reconciler struct {
+	client.Client
+	Scheme  *runtime.Scheme
+	Options Options
+
+	caOnce sync.Mutex
+	ca     *CA
+}
+
+// +kubebuilder:rbac:groups=alpheus-dev.org,resources=streamruns,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=alpheus-dev.org,resources=streamruns/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=alpheus-dev.org,resources=streamruns/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete;deletecollection;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+
+// SetupWithManager registers the reconciler; it watches the pods it owns.
+func (rc *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if rc.Options.Resync == 0 {
+		rc.Options.Resync = 2 * time.Second
+	}
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&v1alpha1.StreamRun{}).
+		Owns(&corev1.Pod{}).
+		Named("streamrun").
+		Complete(rc)
+}
+
+// Reconcile brings one run closer to its desired state and patches its
+// status when it changed.
+func (rc *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	var r v1alpha1.StreamRun
+	if err := rc.Get(ctx, req.NamespacedName, &r); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if !r.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, rc.finalize(ctx, &r)
+	}
+	if controllerutil.AddFinalizer(&r, Finalizer) {
+		if err := rc.Update(ctx, &r); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	before := r.DeepCopy()
+	res, err := rc.reconcile(ctx, &r)
+	if !equality.Semantic.DeepEqual(before.Status, r.Status) {
+		r.Status.ObservedGeneration = r.Generation
+		if perr := rc.Status().Patch(ctx, &r, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); perr != nil {
+			if apierrors.IsConflict(perr) {
+				return ctrl.Result{Requeue: true}, nil
+			}
+			return ctrl.Result{}, perr
+		}
+	}
+	return res, err
+}
+
+func terminal(p v1alpha1.RunPhase) bool {
+	switch p {
+	case v1alpha1.RunSucceeded, v1alpha1.RunPartiallySucceeded, v1alpha1.RunFailed, v1alpha1.RunCancelled:
+		return true
+	}
+	return false
+}
+
+func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctrl.Result, error) {
+	st := &r.Status
+	if terminal(st.Phase) {
+		return rc.afterFinish(ctx, r)
+	}
+	g, err := newGraph(&r.Spec)
+	if err != nil {
+		rc.fail(ctx, r, "invalid graph: "+err.Error())
+		return ctrl.Result{}, nil
+	}
+	if !rc.Options.AllowTags {
+		for _, s := range r.Spec.Steps {
+			if !pinned(s.Image) {
+				rc.fail(ctx, r, fmt.Sprintf("step %s: image %s is not pinned by digest (@sha256:...)", s.Name, s.Image))
+				return ctrl.Result{}, nil
+			}
+		}
+	}
+	if st.Phase == "" {
+		st.Phase = v1alpha1.RunPending
+		st.StartedAt = ptrNow()
+	}
+	initStatus(r)
+
+	if r.Spec.Cancel {
+		if err := rc.deletePods(ctx, r); err != nil {
+			return ctrl.Result{}, err
+		}
+		st.Phase, st.Message = v1alpha1.RunCancelled, "cancelled"
+		rc.finish(ctx, r, g)
+		return ctrl.Result{}, nil
+	}
+	if rc.Options.HubAddress != "" {
+		if err := rc.ensureSignalSecret(ctx, r); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	pods, err := rc.pods(ctx, r)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	stop := ""
+	for i := range r.Spec.Steps {
+		s := &r.Spec.Steps[i]
+		ss := &st.Steps[i]
+		for j := range ss.Replicas {
+			msg, err := rc.replica(ctx, r, g, s, &ss.Replicas[j], pods)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if msg != "" && stop == "" {
+				stop = msg
+			}
+		}
+		ss.Phase = stepPhase(ss.Replicas)
+	}
+
+	rc.refreshStorage(ctx, r, g)
+
+	finished, failed, running := 0, 0, false
+	for _, ss := range st.Steps {
+		switch ss.Phase {
+		case v1alpha1.StepSucceeded:
+			finished++
+		case v1alpha1.StepFailed:
+			finished++
+			failed++
+		case v1alpha1.StepRunning:
+			running = true
+		}
+	}
+	st.StepsFinished = fmt.Sprintf("%d/%d", finished, len(st.Steps))
+	switch {
+	case stop != "":
+		if err := rc.deletePods(ctx, r); err != nil {
+			return ctrl.Result{}, err
+		}
+		st.Phase, st.Message = v1alpha1.RunFailed, stop
+		rc.finish(ctx, r, g)
+		return ctrl.Result{}, nil
+	case finished == len(st.Steps):
+		st.Phase, st.Message = v1alpha1.RunSucceeded, ""
+		if failed > 0 {
+			st.Phase, st.Message = v1alpha1.RunPartiallySucceeded, fmt.Sprintf("%d steps had failed replicas", failed)
+		}
+		rc.finish(ctx, r, g)
+		return ctrl.Result{}, nil
+	case running:
+		st.Phase = v1alpha1.RunRunning
+	}
+	setCondition(r, v1alpha1.ConditionProgressing, metav1.ConditionTrue, "Running", "")
+	return ctrl.Result{RequeueAfter: rc.Options.Resync}, nil
+}
+
+// initStatus gives every step and replica an entry, in spec order.
+func initStatus(r *v1alpha1.StreamRun) {
+	if len(r.Status.Steps) == len(r.Spec.Steps) {
+		return
+	}
+	r.Status.Steps = make([]v1alpha1.StepStatus, len(r.Spec.Steps))
+	for i, s := range r.Spec.Steps {
+		ss := &r.Status.Steps[i]
+		ss.Name, ss.Phase = s.Name, v1alpha1.StepPending
+		for j := range replicas(&s) {
+			ss.Replicas = append(ss.Replicas, v1alpha1.ReplicaStatus{Index: int32(j), Phase: v1alpha1.StepPending, Attempt: 1})
+		}
+	}
+}
+
+// replica advances one replica: it creates the pod of the current attempt,
+// follows it, and starts a new attempt when it failed and its pod is
+// confirmed gone (GO-67, GO-77). It returns a message when the replica
+// failed for good and the run must stop.
+func (rc *Reconciler) replica(ctx context.Context, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rs *v1alpha1.ReplicaStatus, pods map[string]*corev1.Pod) (string, error) {
+	if rs.Phase == v1alpha1.StepSucceeded || rs.Phase == v1alpha1.StepFailed {
+		return "", nil
+	}
+	name := podName(r.Name, s.Name, int(rs.Index), rs.Attempt)
+	pod := pods[name]
+	if pod == nil {
+		if rs.Pod == name {
+			// The attempt's pod existed and is gone, so it is safe to start
+			// another (GO-67).
+			return rc.failedAttempt(ctx, r, g, s, rs, "the pod was deleted")
+		}
+		p, err := rc.pod(r, g, s, int(rs.Index), rs.Attempt)
+		if err != nil {
+			return "", err
+		}
+		if err := controllerutil.SetControllerReference(r, p, rc.Scheme); err != nil {
+			return "", err
+		}
+		if err := rc.Create(ctx, p); err != nil && !apierrors.IsAlreadyExists(err) {
+			return "", err
+		}
+		rs.Pod, rs.Phase = name, v1alpha1.StepPending
+		return "", nil
+	}
+
+	rs.Pod = name
+	switch pod.Status.Phase {
+	case corev1.PodSucceeded:
+		rs.Phase, rs.Message = v1alpha1.StepSucceeded, ""
+	case corev1.PodFailed:
+		// Every container has stopped, so the attempt is over (GO-67).
+		return rc.failedAttempt(ctx, r, g, s, rs, failure(pod))
+	case corev1.PodRunning:
+		rs.Phase = v1alpha1.StepRunning
+		if agentRestarts(pod) >= agentRestartLimit {
+			rs.Message = fmt.Sprintf("the agent restarted %d times", agentRestarts(pod))
+			if err := rc.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
+				return "", err
+			}
+		}
+	default:
+		// Pending, or Unknown: a pod on a node without contact blocks a new
+		// attempt until it is deleted (GO-67).
+	}
+	return "", nil
+}
+
+// failedAttempt starts the next attempt, or fails the replica when it has
+// used all of its restarts. With failurePolicy continue the replica's
+// streams are closed instead of stopping the run (GO-97).
+func (rc *Reconciler) failedAttempt(ctx context.Context, r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rs *v1alpha1.ReplicaStatus, msg string) (string, error) {
+	if rs.Restarts < maxRestarts(s) {
+		rs.Restarts++
+		rs.Attempt++
+		rs.Pod, rs.Phase, rs.Message = "", v1alpha1.StepPending, fmt.Sprintf("attempt %d failed: %s", rs.Attempt-1, msg)
+		return "", nil
+	}
+	rs.Phase, rs.Message = v1alpha1.StepFailed, msg
+	if s.FailurePolicy == v1alpha1.FailureContinue {
+		failed, err := rc.closeStreams(ctx, r, g, s, int(rs.Index), int64(rs.Attempt)+1)
+		if err != nil {
+			return "", err
+		}
+		rs.FailedChunks = failed
+		return "", nil
+	}
+	return fmt.Sprintf("step %s replica %d failed after %d restarts: %s", s.Name, rs.Index, rs.Restarts, msg), nil
+}
+
+// failure describes why a pod failed, from the component's exit.
+func failure(pod *corev1.Pod) string {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == ComponentContainer && cs.State.Terminated != nil {
+			t := cs.State.Terminated
+			msg := fmt.Sprintf("the component exited with code %d", t.ExitCode)
+			if t.Message != "" {
+				msg += ": " + t.Message
+			}
+			return msg
+		}
+	}
+	if pod.Status.Message != "" {
+		return pod.Status.Message
+	}
+	return "the pod failed"
+}
+
+func agentRestarts(pod *corev1.Pod) int32 {
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.Name == AgentContainer {
+			return cs.RestartCount
+		}
+	}
+	return 0
+}
+
+func stepPhase(rs []v1alpha1.ReplicaStatus) v1alpha1.StepPhase {
+	done, failed, running := 0, 0, false
+	for _, r := range rs {
+		switch r.Phase {
+		case v1alpha1.StepSucceeded:
+			done++
+		case v1alpha1.StepFailed:
+			done++
+			failed++
+		case v1alpha1.StepRunning:
+			running = true
+		}
+	}
+	switch {
+	case failed > 0 && done == len(rs):
+		return v1alpha1.StepFailed
+	case done == len(rs):
+		return v1alpha1.StepSucceeded
+	case running || done > 0:
+		return v1alpha1.StepRunning
+	}
+	return v1alpha1.StepPending
+}
+
+// pods lists the run's pods by name.
+func (rc *Reconciler) pods(ctx context.Context, r *v1alpha1.StreamRun) (map[string]*corev1.Pod, error) {
+	var list corev1.PodList
+	if err := rc.List(ctx, &list, client.InNamespace(r.Namespace), client.MatchingLabels{LabelRun: r.Name}); err != nil {
+		return nil, err
+	}
+	pods := map[string]*corev1.Pod{}
+	for i := range list.Items {
+		p := &list.Items[i]
+		if metav1.IsControlledBy(p, r) {
+			pods[p.Name] = p
+		}
+	}
+	return pods, nil
+}
+
+func (rc *Reconciler) deletePods(ctx context.Context, r *v1alpha1.StreamRun) error {
+	return client.IgnoreNotFound(rc.DeleteAllOf(ctx, &corev1.Pod{}, client.InNamespace(r.Namespace), client.MatchingLabels{LabelRun: r.Name}))
+}
+
+// fail ends a run that cannot start, such as one with an invalid graph.
+func (rc *Reconciler) fail(ctx context.Context, r *v1alpha1.StreamRun, msg string) {
+	r.Status.Phase, r.Status.Message = v1alpha1.RunFailed, msg
+	if r.Status.StartedAt == nil {
+		r.Status.StartedAt = ptrNow()
+	}
+	rc.finish(ctx, r, nil)
+}
+
+// finish sets the end of a run and writes what outlives it: the summary
+// (GO-123) and finishedAt in run.json (GO-98).
+func (rc *Reconciler) finish(ctx context.Context, r *v1alpha1.StreamRun, g *graph) {
+	r.Status.FinishedAt = ptrNow()
+	status := metav1.ConditionTrue
+	if r.Status.Phase != v1alpha1.RunSucceeded {
+		status = metav1.ConditionFalse
+	}
+	setCondition(r, v1alpha1.ConditionReady, status, string(r.Status.Phase), r.Status.Message)
+	setCondition(r, v1alpha1.ConditionProgressing, metav1.ConditionFalse, string(r.Status.Phase), "")
+	if r.Status.Phase == v1alpha1.RunPartiallySucceeded {
+		setCondition(r, v1alpha1.ConditionDegraded, metav1.ConditionTrue, "FailedReplicas", r.Status.Message)
+	}
+	if g != nil {
+		rc.refreshStorage(ctx, r, g)
+	}
+	if err := rc.writeSummary(ctx, r); err != nil {
+		log.FromContext(ctx).Error(err, "summary")
+	}
+}
+
+// afterFinish deletes what a finished run keeps: its pods and runs/<uid>/
+// after ttlAfterFinished (SPEC 6.1 step 6), and its results after
+// resultsTTL (GO-78).
+func (rc *Reconciler) afterFinish(ctx context.Context, r *v1alpha1.StreamRun) (ctrl.Result, error) {
+	if r.Status.FinishedAt == nil {
+		return ctrl.Result{}, nil
+	}
+	now := time.Now()
+	var next time.Duration
+	if ttl := r.Spec.TTLAfterFinished; ttl != nil {
+		if left := r.Status.FinishedAt.Add(ttl.Duration).Sub(now); left > 0 {
+			next = left
+		} else {
+			if err := rc.deletePods(ctx, r); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := rc.deletePrefix(ctx, r, chunk.RunPrefix(string(r.UID))); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	}
+	if ttl := r.Spec.ResultsTTL; ttl != nil && ttl.Duration > 0 {
+		if left := r.Status.FinishedAt.Add(ttl.Duration).Sub(now); left > 0 {
+			if next == 0 || left < next {
+				next = left
+			}
+		} else if err := rc.deletePrefix(ctx, r, "results/"+r.Name+"/"+string(r.UID)+"/"); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	return ctrl.Result{RequeueAfter: next}, nil
+}
+
+// finalize deletes the run's storage prefix, not its results (GO-20,
+// GO-78), and lets the run go.
+func (rc *Reconciler) finalize(ctx context.Context, r *v1alpha1.StreamRun) error {
+	if !controllerutil.ContainsFinalizer(r, Finalizer) {
+		return nil
+	}
+	if err := rc.deletePrefix(ctx, r, chunk.RunPrefix(string(r.UID))); err != nil {
+		return err
+	}
+	controllerutil.RemoveFinalizer(r, Finalizer)
+	return rc.Update(ctx, r)
+}
+
+func (rc *Reconciler) deletePrefix(ctx context.Context, r *v1alpha1.StreamRun, prefix string) error {
+	st, err := rc.store(ctx, r)
+	if err != nil {
+		return err
+	}
+	if err := store.DeletePrefix(ctx, st, prefix); err != nil {
+		return fmt.Errorf("delete %s: %w", prefix, err)
+	}
+	return nil
+}
+
+// store opens the run's storage with the keys in its Secret.
+func (rc *Reconciler) store(ctx context.Context, r *v1alpha1.StreamRun) (store.Store, error) {
+	if rc.Options.NewStore != nil {
+		return rc.Options.NewStore(ctx, r)
+	}
+	var secret corev1.Secret
+	if err := rc.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: r.Spec.Storage.SecretRef}, &secret); err != nil {
+		return nil, fmt.Errorf("storage secret: %w", err)
+	}
+	return store.NewS3(store.S3Config{
+		Endpoint:  r.Spec.Storage.Endpoint,
+		Bucket:    r.Spec.Storage.Bucket,
+		Region:    r.Spec.Storage.Region,
+		AccessKey: string(secret.Data["AWS_ACCESS_KEY_ID"]),
+		SecretKey: string(secret.Data["AWS_SECRET_ACCESS_KEY"]),
+		CAFile:    rc.Options.StorageCAFile,
+	})
+}
+
+// ensureSignalSecret gives the run a client certificate for the signal hub
+// (GO-41).
+func (rc *Reconciler) ensureSignalSecret(ctx context.Context, r *v1alpha1.StreamRun) error {
+	var s corev1.Secret
+	err := rc.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: signalSecret(r.Name)}, &s)
+	if err == nil || !apierrors.IsNotFound(err) {
+		return err
+	}
+	ca, err := rc.loadCA(ctx)
+	if err != nil {
+		return err
+	}
+	certPEM, keyPEM, err := ca.Issue(r.Namespace + "/" + r.Name + "/" + string(r.UID))
+	if err != nil {
+		return err
+	}
+	s = corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: r.Namespace, Name: signalSecret(r.Name)},
+		Type:       corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			"ca.crt":                ca.CertPEM(),
+			corev1.TLSCertKey:       certPEM,
+			corev1.TLSPrivateKeyKey: keyPEM,
+		},
+	}
+	if err := controllerutil.SetControllerReference(r, &s, rc.Scheme); err != nil {
+		return err
+	}
+	return client.IgnoreAlreadyExists(rc.Create(ctx, &s))
+}
+
+func (rc *Reconciler) loadCA(ctx context.Context) (*CA, error) {
+	rc.caOnce.Lock()
+	defer rc.caOnce.Unlock()
+	if rc.ca == nil {
+		ca, err := LoadCA(ctx, rc.Client, rc.Options.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		rc.ca = ca
+	}
+	return rc.ca, nil
+}
+
+func setCondition(r *v1alpha1.StreamRun, typ string, status metav1.ConditionStatus, reason, msg string) {
+	if reason == "" {
+		reason = "Unknown"
+	}
+	meta.SetStatusCondition(&r.Status.Conditions, metav1.Condition{
+		Type:               typ,
+		Status:             status,
+		Reason:             reason,
+		Message:            msg,
+		ObservedGeneration: r.Generation,
+	})
+}
+
+func ptrNow() *metav1.Time {
+	t := metav1.Now()
+	return &t
+}

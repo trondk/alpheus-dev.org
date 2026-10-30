@@ -1,7 +1,7 @@
 # Alpheus
 
-Alpheus streams Parquet data between containers on Kubernetes, with
-nothing but object storage in between.
+Alpheus streams files between containers on Kubernetes, with nothing
+but object storage in between.
 
 ```
    ~~~~~~~~~~~\                                  /~~~~~~~~~>
@@ -10,10 +10,11 @@ nothing but object storage in between.
                        chunks in object storage
 ```
 
-> **Status: design phase.** Early code exists: the API, the chunk format
-> and the component SDK. The agent and controller that run a flow do not
-> exist yet, so nothing runs on Kubernetes. Nothing here is ready for use,
-> and everything may change.
+> **Status: design phase.** The API, the chunk format, the component
+> SDK, the agent and the controller exist and pass their tests against a
+> Kubernetes API server and S3 storage, but no flow has run on a cluster
+> yet and no images are published. Nothing here is ready for use, and
+> everything may change.
 
 
 ## Why "Alpheus"
@@ -28,7 +29,8 @@ appears in the next.
 ## What it does
 
 - **Every step runs at the same time.** A flow is a graph of
-  containers, and data flows through it continuously as Parquet chunks.
+  containers, and data flows through it continuously as chunks: files
+  in any format, which Alpheus moves but never reads.
 - **No message broker for data.** Steps exchange chunks through any
   S3-compatible store. Only small signals ("chunk 17 is ready") pass
   between them, and even those are optional: the manifest in object
@@ -56,7 +58,7 @@ run on immutable distributions such as Talos.
 
 ## What it looks like
 
-The API exists as a CRD, but nothing runs it yet.
+The controller and agent have not run a flow on a cluster yet.
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1
@@ -107,7 +109,7 @@ The Go module `alpheus-dev.org/alpheus` is the repository root.
 | [`api/`](api/) | The `StreamRun` API types (public) |
 | [`sdk/`](sdk/) | The component SDK (public) |
 | [`internal/`](internal/) | Chunk protocol, object storage, the agent, signals and the rest of the program (private) |
-| [`cmd/`](cmd/) | The binaries, so far `alpheus-agent` |
+| [`cmd/`](cmd/) | The binaries `alpheus-controller` and `alpheus-agent` |
 | [`proto/`](proto/) | The component API and the signal hub's protocol, as gRPC |
 | [`config/`](config/) | Generated CRD and samples |
 | [`test/`](test/) | Test components and end-to-end tests |

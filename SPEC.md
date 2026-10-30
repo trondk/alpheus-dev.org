@@ -62,10 +62,10 @@ alpheus/
 ├── api/v1alpha1/          StreamRun-typer med kubebuilder-markører (findes)
 ├── cmd/
 │   ├── alpheus/           CLI
-│   ├── alpheus-controller/
+│   ├── alpheus-controller/ controllerens binær (findes)
 │   └── alpheus-agent/     agentens binær (findes)
 ├── internal/
-│   ├── controller/        reconcile-løkke, pod-spec, status
+│   ├── controller/        reconcile-løkke, pod-spec, status, signal-CA og hub (findes)
 │   ├── agent/             socket-server, ind- og udgange, genstart (findes)
 │   ├── chunk/             navngivning, manifest, ack-filer, checksum (findes)
 │   ├── pb/                genereret Go-kode fra proto/ (findes)
@@ -76,7 +76,7 @@ alpheus/
 │   └── version/
 ├── sdk/                   offentligt komponent-SDK, lokal mode og agent-mode (findes)
 ├── proto/                 component.proto og signal.proto (findes)
-├── config/                genererede CRD-, RBAC- og webhook-manifester
+├── config/                genererede CRD-, RBAC- og webhook-manifester (CRD og RBAC findes)
 │   ├── crd/bases/         StreamRun-CRD'en (findes)
 │   └── samples/           eksempler, bl.a. testcase03-replicas (findes)
 ├── hack/                  boilerplate og test-crd.sh (findes)
@@ -114,7 +114,7 @@ stadig kun foreslået.
 | CLI | `github.com/spf13/cobra` | Apache 2.0 | Foreslået (trin 10) |
 | Metrics | `github.com/prometheus/client_golang` | Apache 2.0 | Foreslået |
 | Logning | `log/slog` fra standardbiblioteket | BSD | I brug |
-| Test | `sigs.k8s.io/controller-runtime/pkg/envtest` | Apache 2.0 | Foreslået (trin 5) |
+| Test | `sigs.k8s.io/controller-runtime/pkg/envtest`, `setup-envtest` (kun build, `go tool`) | Apache 2.0 | Godkendt, i brug (v0.25.2; Kubernetes 1.37.0) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -685,8 +685,18 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    (GO-35). Fejllog og tællere skrives under `errors/<trin>/<replika>/`
    efter de udgående manifester, så de aldrig står to gange, men kan
    mangle efter et nedbrud lige derimellem (se GO-115 i 16). mTLS til
-   hub'en (GO-41) venter på controlleren, der udsteder certifikaterne.
-5. Controlleren med envtest.
+   hub'en (GO-41) kom med controlleren i trin 5.
+5. Controlleren med envtest. *Færdig*: `internal/controller` og
+   `cmd/alpheus-controller`. Tests mod en rigtig API-server (`make test`
+   henter envtest-binærerne): pod-spec med agenten som native sidecar,
+   genstart og `maxRestarts`, `failurePolicy: continue` med lukkede
+   strømme og `failedChunks`, ugyldig graf, image uden digest, cancel,
+   finalizer, status fra lageret og mTLS til hub'en. CEL-reglerne for
+   `resultsTTL` og `ttlAfterFinished` sammenligner nu som varigheder,
+   fordi Go-klienten skriver `168h` tilbage som `168h0m0s`. Ikke med
+   endnu: ServiceAccount og NetworkPolicy pr. run (6.1 trin 2),
+   webhook (GO-23), og at hub'en afviser ældre forsøg (GO-41), da
+   certifikaterne er pr. run og ikke pr. forsøg.
 6. E2E på Talos i Vagrant-VM'en med testcase01.
 7. Fan-out og fan-in med testcase02, replikaer med testcase03-replicas.
 8. Genstart, backpressure og kaos-test.
@@ -714,3 +724,9 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
 - Et trin, der hedder `errors`, får resultater under
   `results/<run>/<uid>/errors/`, samme sted som fejlloggen. Skal navnet
   afvises i CRD'en, eller skal fejlloggen flyttes (fx til `_errors/`)?
+- Med `failurePolicy: continue` acker en fejlet replika aldrig de
+  chunks, der fortsat tildeles den. Producenten blokerer så på
+  backpressure (GO-35), og runnet går i stå. Skal controlleren skrive
+  replikaens ack-fil efter bekræftet stop, som den skriver dens
+  manifester (GO-97), eller skal producenten springe fejlede replikaer
+  over?

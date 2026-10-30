@@ -2,10 +2,12 @@
 
 all: generate vet check-deps test
 
-# Deepcopy functions and the CRD, from the kubebuilder markers in api/.
+# Deepcopy functions and the CRD from the kubebuilder markers in api/, and
+# the controller's RBAC role from those in internal/controller.
 generate:
 	go tool controller-gen object:headerFile=hack/boilerplate.go.txt paths=./api/...
 	go tool controller-gen crd paths=./api/... output:crd:artifacts:config=config/crd/bases
+	go tool controller-gen rbac:roleName=alpheus-controller paths=./internal/controller/... output:rbac:artifacts:config=config/rbac
 	$(MAKE) proto
 
 # Go code for proto/ in internal/pb, with buf and the generators in go.mod.
@@ -19,8 +21,11 @@ check-generated: generate
 vet:
 	go vet ./...
 
+# The controller's tests run against kube-apiserver and etcd from envtest,
+# which setup-envtest downloads the first time.
+ENVTEST_K8S := 1.37.0
 test:
-	go test -race ./...
+	KUBEBUILDER_ASSETS="$$(go tool setup-envtest use $(ENVTEST_K8S) -p path)" go test -race ./...
 
 # Checks the CRD's schema and CEL rules against the cluster in KUBECONFIG,
 # for example the Vagrant test cluster (source vagrant/credentials.sh).
