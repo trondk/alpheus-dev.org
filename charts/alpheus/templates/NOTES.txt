@@ -1,0 +1,13 @@
+Alpheus {{ .Chart.AppVersion }} is installed in {{ .Release.Namespace }}.
+
+The controller runs StreamRuns in any namespace. Each run needs a Secret
+with the S3 keys (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) named in
+spec.storage.secretRef.
+
+The controller's pods meet Pod Security level restricted; to enforce it:
+
+  kubectl label namespace {{ .Release.Namespace }} pod-security.kubernetes.io/enforce=restricted
+
+Watch a run with:
+
+  kubectl get streamruns -A

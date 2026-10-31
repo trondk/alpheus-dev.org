@@ -89,11 +89,9 @@ alpheus/
 ├── proto/                 component.proto og signal.proto (findes)
 ├── config/                genererede CRD-, RBAC- og webhook-manifester (CRD og RBAC findes)
 │   ├── crd/bases/         StreamRun-CRD'en (findes)
-│   ├── manager/           controllerens Deployment, hub-Service og RBAC-binding (findes)
-│   ├── default/           CRD, RBAC og controller samlet, til kustomize (findes)
 │   └── samples/           eksempler, bl.a. testcase03 (findes)
-├── hack/                  boilerplate, test-crd.sh, images.sh og e2e.sh (findes)
-├── charts/alpheus/        Helm-chart
+├── hack/                  boilerplate, test-crd.sh, test-chart.sh, images.sh og e2e.sh (findes)
+├── charts/alpheus/        Helm-chart: CRD, RBAC, controller og hub-Service (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
 │   ├── e2e/               testcase01 til testcase06 (findes), og fejltests
@@ -826,7 +824,11 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    sat, fx til Zot som i testmiljøet (12.2) og i de andre projekter,
    hentes og skubbes images og chart der i stedet.
 4. Helm-chartet udgives som OCI-artefakt samme sted
-   (`oci://ghcr.io/alpheus-dev/charts/alpheus`).
+   (`oci://ghcr.io/alpheus-dev/charts/alpheus`). CI skriver agentens og
+   controllerens digests ind i chartets `values.yaml`, før det pakkes, så
+   et udgivet chart altid installerer images pinned ved digest (GO-24).
+   Images har samme stier i alle registries (`alpheus-dev/agent` og
+   `alpheus-dev/controller`), så et spejl kun kræver `registry`.
 5. Hjemmesiden genbygges med dokumentation for den nye version.
 
 | ID | Niveau | Krav |
@@ -922,7 +924,16 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    tæller som et fejlet forsøg (GO-67).
 9. CLI, Helm-chart og første udgivelse `v0.1.0`. Allerede bygget her:
    egen bucket til resultater (GO-129) med en nøgle, der kun kan læse
-   dem; testcase03 bruger den. Komponenter i andre
+   dem; testcase03 bruger den. Helm-chartet (`charts/alpheus`) er
+   bygget: CRD'en og ClusterRole'n er kopier af de genererede filer
+   (`make generate`, kontrolleret af `make check-generated`), CRD'en
+   opgraderes med chartet og bliver stående, når det afinstalleres, og
+   agentens image skal være pinned ved digest, medmindre `allowTags` er
+   sat. `make test-chart` tjekker det renderede chart uden klynge, og
+   `make e2e` installerer nu controlleren med chartet i stedet for
+   kustomize, med `registry` sat til Zot; kustomize-manifesterne
+   (`config/manager`, `config/default`) er fjernet. Chartet er skubbet
+   til Zot som OCI-artefakt og hentet derfra igen. Komponenter i andre
    sprog end Go bruger gRPC-kontrakten (`proto/component.proto`) og den
    dokumenterede lokale mode; der er intet Python-SDK i `v0.1.0`. En
    Python-referencekomponent på ca. 200 linjer i `test/components/`

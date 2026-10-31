@@ -1,13 +1,16 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-s3 test-agent-s3 vet images e2e bench
+.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-s3 test-agent-s3 vet images e2e bench
 
 all: generate vet check-deps test
 
 # Deepcopy functions and the CRD from the kubebuilder markers in api/, and
-# the controller's RBAC role from those in internal/controller.
+# the controller's RBAC role from those in internal/controller. The Helm
+# chart gets a copy of both.
 generate:
 	go tool controller-gen object:headerFile=hack/boilerplate.go.txt paths=./api/...
 	go tool controller-gen crd paths=./api/... output:crd:artifacts:config=config/crd/bases
 	go tool controller-gen rbac:roleName=alpheus-controller paths=./internal/controller/... output:rbac:artifacts:config=config/rbac
+	cp config/crd/bases/alpheus-dev.org_streamruns.yaml charts/alpheus/files/crd.yaml
+	cp config/rbac/role.yaml charts/alpheus/files/role.yaml
 	$(MAKE) proto
 
 # Go code for proto/ in internal/pb, with buf and the generators in go.mod.
@@ -16,7 +19,7 @@ proto:
 
 # Fails when generated code is not up to date (GO-63).
 check-generated: generate
-	git diff --exit-code -- api config internal/pb
+	git diff --exit-code -- api config internal/pb charts/alpheus/files
 
 vet:
 	go vet ./...
@@ -31,6 +34,11 @@ test:
 # for example the Vagrant test cluster (source vagrant/credentials.sh).
 test-crd: generate
 	hack/test-crd.sh
+
+# Lints and renders the Helm chart with helm (HELM), and checks what it
+# renders for the registry, digests and the hub.
+test-chart: generate
+	hack/test-chart.sh
 
 # Runs internal/store's tests against Garage in the Vagrant test cluster,
 # over HTTPS through the gateway, trusting the test CA.
@@ -55,8 +63,8 @@ test-agent-s3:
 images:
 	hack/images.sh
 
-# Installs the controller in the Vagrant test cluster with those images and
-# runs the testcases in test/e2e against it.
+# Installs the controller in the Vagrant test cluster with the Helm chart and
+# those images, and runs the testcases in test/e2e against it.
 e2e:
 	hack/e2e.sh
 

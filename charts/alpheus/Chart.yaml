@@ -1,0 +1,11 @@
+apiVersion: v2
+name: alpheus
+description: Streams files between containers on Kubernetes through object storage. Installs the StreamRun CRD and the controller with its signal hub.
+type: application
+version: 0.1.0
+appVersion: v0.1.0
+home: https://alpheus-dev.org
+sources:
+  - https://github.com/alpheus-dev/alpheus
+license: Apache-2.0
+kubeVersion: ">=1.29.0-0"

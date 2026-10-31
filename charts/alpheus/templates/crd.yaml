@@ -1,0 +1,4 @@
+{{- /* files/crd.yaml is a copy of the generated CRD (make generate). */ -}}
+{{- if .Values.crds.install }}
+{{ .Files.Get "files/crd.yaml" | replace "metadata:\n  annotations:\n" "metadata:\n  annotations:\n    helm.sh/resource-policy: keep\n" }}
+{{- end }}

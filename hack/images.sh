@@ -2,7 +2,9 @@
 # Builds the agent, the controller and the test components as images and
 # pushes them to the registry, by default Zot in the Vagrant test cluster.
 # The binaries are static, so each image is one file on scratch, running as
-# uid 65532. Writes the images, pinned by digest, to _out/images.env.
+# uid 65532. The agent and the controller get the same paths as on GitHub
+# Container Registry, so the Helm chart's registry value is all that differs.
+# Writes the images, pinned by digest, to _out/images.env.
 #
 # Usage: hack/images.sh
 #   REGISTRY       the name images are pulled by (registry.alpheus.test:30500)
@@ -20,8 +22,8 @@ TAG="${TAG:-dev}"
 
 # binary, repository and variable in images.env
 IMAGES=(
-  "alpheus-agent alpheus/agent AGENT_IMAGE"
-  "alpheus-controller alpheus/controller CONTROLLER_IMAGE"
+  "alpheus-agent alpheus-dev/agent AGENT_IMAGE"
+  "alpheus-controller alpheus-dev/controller CONTROLLER_IMAGE"
   "bench alpheus-test/bench BENCH_IMAGE"
 )
 

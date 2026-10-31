@@ -1,0 +1,15 @@
+{{- if .Values.signalHub.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: alpheus-signal-hub
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: alpheus-controller
+    alpheus-dev.org/signal-hub: active
+  ports:
+    - {name: signal-hub, port: {{ .Values.signalHub.port }}, targetPort: signal-hub}
+{{- end }}

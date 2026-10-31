@@ -1,0 +1,81 @@
+{{- if not (or .Values.agent.image.digest .Values.controller.allowTags) }}
+{{- fail "agent.image.digest is required: the agent's image must be pinned by digest (GO-24)" }}
+{{- end }}
+{{- $hub := printf "alpheus-signal-hub.%s.svc:%d" .Release.Namespace (int .Values.signalHub.port) }}
+# The controller, with the builtin signal hub in the leader (GO-73). The
+# hub's Service selects only the pod labelled as the active hub.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alpheus-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alpheus.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alpheus-controller
+  template:
+    metadata:
+      labels:
+        {{- include "alpheus.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: alpheus-controller
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: controller
+          image: {{ include "alpheus.image" (dict "root" . "image" .Values.controller.image) }}
+          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          args:
+            - -agent-image={{ include "alpheus.image" (dict "root" . "image" .Values.agent.image) }}
+            {{- if .Values.signalHub.enabled }}
+            - -hub-listen=:{{ .Values.signalHub.port }}
+            - -hub-address={{ $hub }}
+            {{- else }}
+            - -hub-listen=
+            {{- end }}
+            {{- if .Values.controller.allowTags }}
+            - -allow-tags
+            {{- end }}
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+          ports:
+            {{- if .Values.signalHub.enabled }}
+            - {name: signal-hub, containerPort: {{ .Values.signalHub.port }}}
+            {{- end }}
+            - {name: metrics, containerPort: 9090}
+            - {name: health, containerPort: 8081}
+          livenessProbe:
+            httpGet: {path: /healthz, port: health}
+          readinessProbe:
+            httpGet: {path: /readyz, port: health}
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

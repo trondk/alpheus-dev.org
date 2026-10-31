@@ -1,0 +1,46 @@
+# Where images are pulled from. Empty means GitHub Container Registry
+# (ghcr.io). Set it to a mirror, such as Zot in an air-gapped cluster; the
+# repositories keep their paths there (SPEC 14).
+registry: ""
+
+# Secrets for pulling the controller's image. The agent runs in each run's
+# namespace, so a private registry needs a pull secret there too.
+imagePullSecrets: []
+
+controller:
+  image:
+    repository: alpheus-dev/controller
+    # Empty means the chart's appVersion.
+    tag: ""
+    # sha256:…, used instead of the tag. A released chart has it set.
+    digest: ""
+    pullPolicy: IfNotPresent
+  # More than one replica gives a standby; only the leader reconciles and
+  # runs the signal hub (GO-73).
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  # Allows component images without a digest, and the agent's image by
+  # tag. For development only (GO-24, GO-26).
+  allowTags: false
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+agent:
+  image:
+    repository: alpheus-dev/agent
+    tag: ""
+    # Required unless controller.allowTags is set (GO-24).
+    digest: ""
+
+signalHub:
+  # Without the hub, agents only poll the manifests: slower, but correct.
+  enabled: true
+  port: 7070
+
+crds:
+  # Installs and upgrades the StreamRun CRD. It is kept when the release is
+  # uninstalled, since deleting it deletes every StreamRun.
+  install: true

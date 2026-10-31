@@ -1,7 +1,0 @@
-# Everything the controller needs: the CRD, its RBAC role and the
-# controller itself. An overlay sets the images, for example the one
-# hack/e2e.sh writes.
-resources:
-  - ../crd
-  - ../rbac
-  - ../manager

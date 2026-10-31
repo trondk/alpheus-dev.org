@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Runs the end-to-end tests (SPEC 12.1) on the Vagrant test cluster: builds
-# and pushes the images, installs the CRD and the controller with them, and
-# runs test/e2e against Garage.
+# and pushes the images, installs the CRD and the controller with the Helm
+# chart and those images, and runs test/e2e against Garage.
 #
 # Usage: hack/e2e.sh [go test flags], for example -run TestTestcase01
 #   SKIP_IMAGES=1  use the images in _out/images.env from the last run
 #   BENCH_*        the testcases' sizes (see test/e2e/e2e_test.go)
+#   HELM           the helm binary (helm)
 # Measurements are written to _out/bench.
 set -euo pipefail
 
@@ -14,6 +15,7 @@ OUT="$ROOT/_out"
 VAGRANT="$ROOT/vagrant"
 # Absolute, since go test runs in the package's folder.
 export KUBECONFIG="$(realpath "${KUBECONFIG:-$VAGRANT/_out/kubeconfig}")"
+HELM="${HELM:-helm}"
 
 [[ ${SKIP_IMAGES:-} == 1 ]] || "$ROOT/hack/images.sh"
 set -a
@@ -21,23 +23,13 @@ set -a
 . "$VAGRANT/_out/secrets.env"
 set +a
 
-# An overlay of config/default with the images pinned by digest.
-mkdir -p "$OUT/deploy"
-cat > "$OUT/deploy/kustomization.yaml" <<YAML
-resources:
-  - ../../config/default
-images:
-  - name: alpheus-controller
-    newName: ${CONTROLLER_IMAGE%@*}
-    digest: ${CONTROLLER_IMAGE#*@}
-patches:
-  - target: {kind: Deployment, name: alpheus-controller}
-    patch: |
-      - op: replace
-        path: /spec/template/spec/containers/0/args/0
-        value: -agent-image=$AGENT_IMAGE
-YAML
-kubectl apply --server-side -k "$OUT/deploy"
+# The Helm chart with the images pinned by digest, from the test registry.
+"$HELM" upgrade --install alpheus "$ROOT/charts/alpheus" \
+  --namespace alpheus-system --create-namespace --wait --timeout 180s \
+  --set registry="${CONTROLLER_IMAGE%%/*}" \
+  --set controller.image.digest="${CONTROLLER_IMAGE#*@}" \
+  --set agent.image.digest="${AGENT_IMAGE#*@}"
+kubectl label namespace alpheus-system --overwrite pod-security.kubernetes.io/enforce=restricted >/dev/null
 kubectl -n alpheus-system rollout status deployment/alpheus-controller --timeout=180s
 
 # The key that can only read the results bucket, made by

@@ -11,7 +11,7 @@ NS="alpheus-crd-test-$$"
 SAMPLE="$ROOT/config/samples/streamrun.yaml"
 FAILED=0
 
-kubectl apply --server-side -f "$ROOT/config/crd/bases/alpheus-dev.org_streamruns.yaml" >/dev/null || exit 1
+kubectl apply --server-side --force-conflicts -f "$ROOT/config/crd/bases/alpheus-dev.org_streamruns.yaml" >/dev/null || exit 1
 kubectl wait --for=condition=Established crd/streamruns.alpheus-dev.org --timeout=30s >/dev/null || exit 1
 kubectl create namespace "$NS" >/dev/null || exit 1
 trap 'kubectl delete namespace "$NS" --wait=false >/dev/null' EXIT

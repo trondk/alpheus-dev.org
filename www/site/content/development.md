@@ -21,6 +21,7 @@ also needs [buf](https://buf.build/docs/installation).
 | `make vet` | Runs `go vet` |
 | `make check-deps` | Fails if Alpheus depends on Parquet or Arrow; it never reads a chunk's content |
 | `make test` | Runs every test with the race detector |
+| `make test-chart` | Lints the Helm chart and checks what it renders; needs [Helm](https://helm.sh/docs/intro/install/) but no cluster |
 
 `make test` needs no cluster and no S3. The agents and components run in
 one process against storage in memory, through pipelines of a few
@@ -40,7 +41,8 @@ from envtest, which `make test` downloads the first time.
 {{< repolink "vagrant/" >}} sets up a single-node Kubernetes cluster on
 Talos Linux in a local VM, with the services the end-to-end tests
 need. It uses Vagrant with the libvirt provider, so you need libvirt
-and KVM, the vagrant-libvirt plugin, `talosctl` and `kubectl`.
+and KVM, the vagrant-libvirt plugin, `talosctl`, `kubectl` and, for the
+end-to-end tests, `helm` and `podman`.
 
 ```console
 $ cd vagrant
@@ -84,8 +86,11 @@ With the cluster running:
 
 `make e2e` runs {{< repolink "hack/e2e.sh" >}}. It builds the agent, the
 controller and the test components as static binaries, each in an image
-with nothing else in it, and pushes them to Zot. It installs the CRD
-and the controller with those images, pinned by digest, and runs the
+with nothing else in it, and pushes them to Zot under the same paths as
+on GitHub Container Registry. It installs the CRD and the controller with
+the Helm chart in {{< repolink "charts/alpheus/" >}}, the way a user
+does, with the `registry` value set to Zot and the images pinned by
+digest. Then it runs the
 tests in {{< repolink "test/e2e/" >}} as ordinary Go tests against the
 cluster.
 
