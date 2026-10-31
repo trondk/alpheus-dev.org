@@ -93,13 +93,13 @@ alpheus/
 ├── config/                genererede CRD-, RBAC- og webhook-manifester (CRD og RBAC findes)
 │   ├── crd/bases/         StreamRun-CRD'en (findes)
 │   └── samples/           eksempler, bl.a. testcase03 (findes)
-├── hack/                  boilerplate, test-crd.sh, test-chart.sh, images.sh og e2e.sh (findes)
+├── hack/                  boilerplate, test-crd.sh, test-chart.sh, images.sh, e2e.sh og clireference (findes)
 ├── charts/alpheus/        Helm-chart: CRD, RBAC, controller og hub-Service (findes)
 ├── templates/             skabeloner til komponenter: component-go og component-python (findes)
 ├── examples/log-report/   eksemplet fra komponent-guiden, i Go og Python (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
-│   ├── e2e/               testcase01 til testcase06 (findes), og fejltests
+│   ├── e2e/               testcase01 til testcase07 (findes), og fejltests
 │   └── internal/table/    CSV og decimaltal for testkomponenterne (findes)
 ├── docs/                  kilde til dokumentationen på hjemmesiden
 ├── vagrant/               testklyngen: Talos i en VM med Garage og Zot (findes)
@@ -611,7 +611,7 @@ sdk.Progress(ctx, "4,2 mio. rækker behandlet")
 | Integration | controller mod API-server | envtest |
 | Integration | agent mod S3 | Garage i en container |
 | Driver | `builtin` | hub og klient i samme proces, og agenter gennem hub'en mod Garage |
-| E2E | testcase01 til testcase06, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
+| E2E | testcase01 til testcase07, fejltests | Talos i en VM med Vagrant og libvirt (`vagrant/` i repo'ets rod) med Garage og Zot (12.2) |
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -786,6 +786,25 @@ slås ihjel med få sekunders mellemrum, ville begynde forfra for evigt. Ud over
 chunk-objekter, som aldrig blev committet, og tællerne skal være
 præcise. `BENCH_CHAOS_SEED` vælger
 pod'erne, så en fejl kan gentages; testen logger den.
+
+**testcase07: komponent-skabelonerne.**
+
+```
+source ──> go (templates/component-go, 2 replikaer) ──> python (templates/component-python) ──> sink
+```
+
+Skabelonerne kører i agent-mode, som brugernes egne komponenter vil gøre.
+Begge får et tomt `match`, så hver byte går videre, og `sink` tjekker
+chunkene som i testcase01. Kilden er `fixed`, og `sink` venter 100 ms pr.
+chunk, så testen når at handle. Testen slår `go`s replika 0 ihjel, når
+den har committet en fjerdedel af sine chunks, og `python`, når den har
+committet halvdelen. Runnet skal lykkes med hver chunk præcis én gang og
+uændret, `go` og `python` skal tælle lige mange linjer ind og ud (præcise
+tællere trods genstart, GO-115), hver af dem skal have én genstart, `go`s
+to strømme skal tilsammen have alle chunks og EOS, og der må ikke ligge
+chunk-objekter, som aldrig blev committet. `hack/images.sh` bygger
+Python-skabelonen med dens egen Dockerfile. Antallet af `go`-replikaer
+ændres med `BENCH_GO_REPLICAS`.
 
 **Agent-test: hvert commit-punkt (GO-74).** En pod, der slås ihjel,
 rammer ikke et bestemt sted mellem to skrivninger til S3. Derfor kører
@@ -978,7 +997,12 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    eksemplet i lokal mode i containere og tjekker, at Go og Python giver
    samme resultat. På testklyngen er begge skabeloner kørt i agent-mode
    mellem `bench`-kilde og -sink, og eksemplet er kørt i begge sprog med
-   byte-identisk resultat. Fundet undervejs: lokal mode læste en
+   byte-identisk resultat. testcase07 (12.1) kører begge skabeloner i
+   agent-mode på testklyngen og slår en pod i hver ihjel midt i strømmen.
+   Hjemmesiden har fået `/docs/` med Kom i gang (installation fra kilden
+   på testklyngen og eksemplet, bygget med `examples/log-report/images.sh`),
+   komponent-guiden og en CLI-reference, der genereres fra CLI'ens egen
+   hjælp (`make generate`, WWW-4). Fundet undervejs: lokal mode læste en
    udgangsmappes `manifest.json` som en chunk, så et trins output ikke
    kunne bruges som næste trins input; manifest-filerne springes nu over
    (GO-87).

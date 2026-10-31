@@ -508,3 +508,26 @@ func TestVersion(t *testing.T) {
 		t.Errorf("version without cluster: exit %d, %q", code, h.stdout.String())
 	}
 }
+
+// The website's CLI reference has every command and its own flags, and
+// leaves out the flags every command has.
+func TestReference(t *testing.T) {
+	var b bytes.Buffer
+	if err := Reference(&b); err != nil {
+		t.Fatal(err)
+	}
+	ref := b.String()
+	for _, c := range commands() {
+		if !strings.Contains(ref, "\n## alpheus "+c.name+"\n") {
+			t.Errorf("no section for %s", c.name)
+		}
+	}
+	for _, want := range []string{"| `-A` | runs in all namespaces |", "| `--orphans` |", "alpheus results gc\n"} {
+		if !strings.Contains(ref, want) {
+			t.Errorf("no %q", want)
+		}
+	}
+	if strings.Count(ref, "`--kubeconfig`") != 1 {
+		t.Error("the common flags are listed more than once")
+	}
+}

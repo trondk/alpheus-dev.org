@@ -25,7 +25,7 @@ set +a
 
 # The Helm chart with the images pinned by digest, from the test registry.
 "$HELM" upgrade --install alpheus "$ROOT/charts/alpheus" \
-  --namespace alpheus-system --create-namespace --wait --timeout 180s \
+  --namespace alpheus-system --create-namespace --wait --timeout 180s --hide-notes \
   --set registry="${CONTROLLER_IMAGE%%/*}" \
   --set controller.image.digest="${CONTROLLER_IMAGE#*@}" \
   --set agent.image.digest="${AGENT_IMAGE#*@}"

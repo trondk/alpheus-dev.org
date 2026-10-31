@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds the agent, the controller and the test components as images and
+# Builds the agent, the controller, the test components and the component
+# templates as images and
 # pushes them to the registry, by default Zot in the Vagrant test cluster.
 # The binaries are static, so each image is one file on scratch, running as
 # uid 65532. The agent and the controller get the same paths as on GitHub
@@ -25,6 +26,7 @@ IMAGES=(
   "alpheus-agent alpheus-dev/agent AGENT_IMAGE"
   "alpheus-controller alpheus-dev/controller CONTROLLER_IMAGE"
   "bench alpheus-test/bench BENCH_IMAGE"
+  "component-go alpheus-test/grep-go GREP_GO_IMAGE"
 )
 
 mkdir -p "$OUT/bin" "$OUT/certs"
@@ -32,7 +34,7 @@ cp "$CA_FILE" "$OUT/certs/ca.crt"
 cd "$ROOT"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$OUT/bin/" \
   ./cmd/alpheus-agent ./cmd/alpheus-controller \
-  ./test/components/bench
+  ./test/components/bench ./templates/component-go
 
 : > "$OUT/images.env.tmp"
 for entry in "${IMAGES[@]}"; do
@@ -43,5 +45,11 @@ for entry in "${IMAGES[@]}"; do
     "$REGISTRY/$repo:$TAG" "docker://$PUSH_REGISTRY/$repo:$TAG"
   echo "$var=$REGISTRY/$repo@$(cat "$OUT/digest")" | tee -a "$OUT/images.env.tmp"
 done
+# The Python component template, built with its own Dockerfile
+# (testcase07).
+podman build --quiet -t "$REGISTRY/alpheus-test/grep-python:$TAG" "$ROOT/templates/component-python" >/dev/null
+podman push --quiet --cert-dir "$OUT/certs" --digestfile "$OUT/digest" \
+  "$REGISTRY/alpheus-test/grep-python:$TAG" "docker://$PUSH_REGISTRY/alpheus-test/grep-python:$TAG"
+echo "GREP_PYTHON_IMAGE=$REGISTRY/alpheus-test/grep-python@$(cat "$OUT/digest")" | tee -a "$OUT/images.env.tmp"
 rm -f "$OUT/digest"
 mv "$OUT/images.env.tmp" "$OUT/images.env"

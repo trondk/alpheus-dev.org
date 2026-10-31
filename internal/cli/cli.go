@@ -212,7 +212,7 @@ func newFlags(e *Env, name, args string, o *opts) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(e.Stderr)
 	fs.Usage = func() {
-		fmt.Fprintf(e.Stderr, "Usage: alpheus %s %s [flags]\n\nFlags:\n", name, args)
+		fmt.Fprintf(e.Stderr, "Usage: %s [flags]\n\nFlags:\n", strings.Join(strings.Fields("alpheus "+name+" "+args), " "))
 		fs.PrintDefaults()
 	}
 	fs.StringVar(&o.kube.Kubeconfig, "kubeconfig", "", "the kubeconfig file (default: KUBECONFIG or ~/.kube/config)")

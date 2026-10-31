@@ -11,9 +11,10 @@ but object storage in between.
 ```
 
 > **Status: design phase.** The API, the chunk format, the component
-> SDK, the agent and the controller exist, and a first flow runs end to
-> end on a test cluster, but no images are published. Nothing here is
-> ready for use, and everything may change.
+> SDK, the agent, the controller, the `alpheus` CLI and the Helm chart
+> exist, and seven test flows run end to end on a test cluster, including
+> restarts and pods killed at random. Nothing is released and no images
+> are published. Nothing here is ready for use, and everything may change.
 
 
 ## Why "Alpheus"
@@ -90,35 +91,56 @@ service you want to depend on.
 
 ## What it looks like
 
-A first flow like this one runs end to end on the test cluster; the
-`alpheus` CLI comes later, and until then `kubectl apply -f flow.yaml`
-does the same.
+A flow is one `StreamRun`. This one is the example in the component
+guide: `generate` writes chunks of log lines, `grep` keeps the ERROR
+lines in two replicas, and `count` totals the lines per level.
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1
 kind: StreamRun
 metadata:
-  name: sales-dk
+  name: log-report
 spec:
   steps:
-    - name: read
-      image: registry.example/input_csv@sha256:…
-    - name: filter
-      image: registry.example/filter@sha256:…
-      settings: {field: country, in: [DK, Denmark, Danmark]}
-    - name: sum
-      image: registry.example/aggregate@sha256:…
+    - name: generate
+      image: registry.example/generate@sha256:…
+      settings: {chunks: 20, lines: 5000}
+    - name: grep
+      image: registry.example/grep@sha256:…
+      replicas: 2
+      settings: {match: ERROR}
+    - name: count
+      image: registry.example/count@sha256:…
   edges:
-    - {from: read, to: filter}
-    - {from: filter, to: sum}
-  chunks: {maxBytes: 512Mi, maxUnacked: 4}
+    - {from: generate, to: grep}
+    - {from: grep, to: count}
   storage: {endpoint: http://s3.example:3900, bucket: flows, secretRef: alpheus-s3}
 ```
 
 ```sh
-alpheus run -f sales-dk.yaml
-alpheus watch sales-dk
+alpheus run -f flow.yaml
+alpheus watch log-report
 ```
+
+[Getting started](https://alpheus-dev.org/docs/getting-started/) installs
+Alpheus from source and runs it on the local test cluster.
+
+
+## Writing a component
+
+A component reads input chunks as files and writes output chunks as
+files; the agent next to it does everything else. Start from a template:
+
+- [`templates/component-go/`](templates/component-go/) uses the Go SDK in
+  [`sdk/`](sdk/).
+- [`templates/component-python/`](templates/component-python/) has a small
+  Python module that speaks the gRPC contract in
+  [`proto/component.proto`](proto/component.proto).
+
+Both have a local mode, which runs the component on folders of files
+without Kubernetes. [Writing components](https://alpheus-dev.org/docs/components/)
+walks through a run step by step and shows the same examples in both
+languages; the code is in [`examples/log-report/`](examples/log-report/).
 
 
 ## What it is not
@@ -143,11 +165,14 @@ The Go module `alpheus-dev.org/alpheus` is the repository root.
 | [`api/`](api/) | The `StreamRun` API types (public) |
 | [`sdk/`](sdk/) | The component SDK (public) |
 | [`internal/`](internal/) | Chunk protocol, object storage, the agent, signals and the rest of the program (private) |
-| [`cmd/`](cmd/) | The binaries `alpheus-controller` and `alpheus-agent` |
+| [`cmd/`](cmd/) | The binaries `alpheus`, the CLI, `alpheus-controller` and `alpheus-agent` |
 | [`proto/`](proto/) | The component API and the signal hub's protocol, as gRPC |
-| [`config/`](config/) | Generated CRD and RBAC, the controller's deployment, and samples |
+| [`config/`](config/) | Generated CRD and RBAC, and samples |
+| [`charts/alpheus/`](charts/alpheus/) | The Helm chart: CRD, RBAC, controller and signal hub |
+| [`templates/`](templates/) | Component templates in Go and Python |
+| [`examples/`](examples/) | The log-report example from the component guide, in Go and Python |
 | [`test/`](test/) | Test components, fixtures and end-to-end tests |
-| [`hack/`](hack/) | Scripts: CRD tests, image builds and end-to-end tests |
+| [`hack/`](hack/) | Scripts: CRD and chart tests, image builds and end-to-end tests |
 | [`vagrant/`](vagrant/) | Local test cluster: Talos in a VM with Garage and Zot |
 | [`www/`](www/) | Specification and Hugo site for the website at [alpheus-dev.org](https://alpheus-dev.org) |
 
@@ -174,8 +199,11 @@ repository is the only copy, and issues can be opened here.
 4. Component SDK with a local test mode. *Done.*
 5. Agent, then controller. *Done.*
 6. End-to-end tests on Talos: a first flow. *Done.*
-7. End-to-end tests with fan-out, fan-in, replicas, restarts and backpressure.
-8. First release, `v0.1.0`.
+7. End-to-end tests with fan-out, fan-in, replicas, restarts, backpressure
+   and chaos. *Done.*
+8. The `alpheus` CLI, the Helm chart, component templates in Go and
+   Python, and a guide to writing components. *Done.*
+9. First release, `v0.1.0`.
 
 
 ## Go module
@@ -188,8 +216,9 @@ hosted.
 ## Contributing
 
 The project is in the design phase. Comments on the specifications are
-welcome as issues on Forgejo. Code contributions will open once a flow
-runs end to end. See `CONTRIBUTING.md` when it is added.
+welcome as issues on Forgejo. How to build and test is on
+[Development](https://alpheus-dev.org/development/). See
+`CONTRIBUTING.md` when it is added.
 
 
 ## Security

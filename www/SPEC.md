@@ -39,11 +39,11 @@ saglig, konkret og uden salgssprog.
 ```
 /                         Forside
 /docs/                    Dokumentation (pr. version)
-  getting-started/        Installation og første flow
+  getting-started/        Installation og første flow (findes: fra kilden på testklyngen)
   concepts/               StreamRun, trin, kanter, chunks, agent, signaler
   reference/streamrun/    CRD-reference, genereret fra api/v1alpha1
-  reference/cli/          CLI-reference, genereret fra cobra
-  components/             Skriv en komponent med SDK'et
+  cli/                    CLI-reference, genereret fra CLI'ens egen hjælp med make generate (findes)
+  components/             Skriv en komponent i Go eller Python: et run trin for trin, skabeloner og eksempler (findes)
   operations/             Drift på Kubernetes og Talos, metrics, sikkerhed
   protocol/               Chunk-protokollen i detaljer
 /development/             Udvikling og test: byg, tests og testklyngen i Vagrant
@@ -60,6 +60,8 @@ saglig, konkret og uden salgssprog.
 | WWW-4 | SKAL | CRD- og CLI-referencen genereres ved hvert byg fra det samme tag (eller `main`) som den dokumentationsversion, de hører til, så de aldrig kommer ud af trit med programmet. |
 | WWW-5 | SKAL | Hver dokumentationsside har et "Edit this page"-link til kilden i det primære repo på Forgejo, ikke i spejlet. |
 | WWW-6 | BØR | Søgning i dokumentationen kører helt i browseren (fx Pagefind), uden en ekstern søgetjeneste. |
+
+Status 2026-10-31: før første udgivelse ligger dokumentationen direkte under `/docs/` med en tydelig markering af, at den beskriver koden på `main`. Versionering efter WWW-3 (`/docs/v0.1/`, `/docs/dev/`) kommer med `v0.1.0`. `/docs/` viser en liste over siderne (temaets `section.html`).
 
 
 ## 3. Indhold på forsiden

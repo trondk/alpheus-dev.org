@@ -1,0 +1,37 @@
+# testcase07 (SPEC 12.1): the component templates in agent mode. go
+# is templates/component-go with two replicas and python is
+# templates/component-python; with an empty match both pass every byte
+# on, so sink checks the chunks as in testcase01. The test kills one pod of
+# each of them. source is fixed, so a restarted source makes the same
+# chunks (GO-92), and sink is slow, so the test has time to act.
+# hack/e2e.sh sets the images, pinned by digest, the test sets the sizes,
+# and the test creates the Secret alpheus-s3 in its namespace.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: testcase07
+spec:
+  steps:
+    - name: source
+      image: ${BENCH_IMAGE}
+      settings: {role: source, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 7, fixed: true}
+    - name: go
+      image: ${GREP_GO_IMAGE}
+      replicas: ${BENCH_GO_REPLICAS}
+      settings: {match: ""}
+    - name: python
+      image: ${GREP_PYTHON_IMAGE}
+      settings: {match: ""}
+    - name: sink
+      image: ${BENCH_IMAGE}
+      settings: {role: sink, chunks: ${BENCH_CHUNKS}, size: ${BENCH_SIZE}, seed: 7, delay: 100}
+  edges:
+    - {from: source, to: go}
+    - {from: go, to: python}
+    - {from: python, to: sink}
+  chunks: {maxBytes: 1Gi, maxUnacked: ${BENCH_MAX_UNACKED}}
+  storage:
+    endpoint: http://garage.storage.svc.cluster.local:3900
+    bucket: alpheus-data
+    region: garage
+    secretRef: alpheus-s3

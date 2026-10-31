@@ -1,7 +1,7 @@
 ---
 title: Development and testing
 description: How Alpheus is built and tested, and the local Kubernetes cluster the end-to-end tests run on.
-lastmod: 2026-10-30
+lastmod: 2026-10-31
 ---
 
 Everything here runs on one Linux machine. Nothing needs a cloud
@@ -197,11 +197,33 @@ containers have stopped, and the test checks the result as before.
   result and the counters must still be exact. `BENCH_CHAOS_SEED`
   repeats a run's choice of pods.
 
+## The component templates
+
+testcase07 runs the two component templates in agent mode, the way users
+will run their own components:
+
+```
+source ──> go (2 replicas) ──> python ──> sink ──> result
+```
+
+`go` is {{< repolink "templates/component-go/" >}} and `python` is
+{{< repolink "templates/component-python/" >}}, both with an empty match,
+so every byte passes and `sink` checks the chunks as in testcase01. The
+test kills `go`'s replica 0 when it has committed a quarter of its chunks,
+and `python` when it has committed half. The run must succeed with every
+chunk once and unchanged, both steps must count the same lines in and out,
+and each must have restarted once. `hack/images.sh` builds the Python
+template with its own Dockerfile.
+
+`make test-templates` runs the Python template and the log-report example
+from [Writing components](/docs/components/) in local mode, in
+containers, without the cluster.
+
 `make e2e` runs them with the others. Every end-to-end test runs in its
 own namespace and deletes it at the end. The test fails if the namespace
 is not gone within three minutes, since a run must clean up its data
 even when its storage keys are deleted with it.
 
 Run every end-to-end test again without rebuilding the images with
-`SKIP_IMAGES=1 hack/e2e.sh`. Images are built with fixed timestamps, so
-unchanged code gives the same digests.
+`SKIP_IMAGES=1 hack/e2e.sh`. Go images are built with fixed timestamps,
+so unchanged code gives the same digests.

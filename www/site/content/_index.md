@@ -32,32 +32,37 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
 
 ## A minimal flow
 
-A run is one `StreamRun` resource. {{< planned >}}Six test flows run end to end on a test cluster, including restarts and pods killed at random, but nothing is released yet: the CLI is built from source with `make cli`, and `kubectl apply -f flow.yaml` does the same as `alpheus run`.{{< /planned >}}
+A run is one `StreamRun` resource. {{< planned >}}Seven test flows run end to end on a test cluster, including restarts and pods killed at random, but nothing is released yet: the CLI is built from source with `make cli`, and `kubectl apply -f flow.yaml` does the same as `alpheus run`.{{< /planned >}}
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1
 kind: StreamRun
 metadata:
-  name: sales-dk
+  name: log-report
 spec:
   steps:
-    - name: read
-      image: registry.example/input_csv@sha256:…
-    - name: filter
-      image: registry.example/filter@sha256:…
-      settings: {field: country, in: [DK, Denmark, Danmark]}
-    - name: sum
-      image: registry.example/aggregate@sha256:…
+    - name: generate
+      image: registry.example/generate@sha256:…
+      settings: {chunks: 20, lines: 5000}
+    - name: grep
+      image: registry.example/grep@sha256:…
+      replicas: 2
+      settings: {match: ERROR}
+    - name: count
+      image: registry.example/count@sha256:…
   edges:
-    - {from: read, to: filter}
-    - {from: filter, to: sum}
-  chunks: {maxBytes: 512Mi, maxUnacked: 4}
+    - {from: generate, to: grep}
+    - {from: grep, to: count}
   storage: {endpoint: http://s3.example:3900, bucket: flows, secretRef: alpheus-s3}
 ```
 
 ```console
 $ alpheus run -f flow.yaml
+$ alpheus watch log-report
 ```
+
+The three steps are the example in [Writing components](/docs/components/),
+in Go and in Python.
 
 ## Install
 

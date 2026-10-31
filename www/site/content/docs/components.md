@@ -38,7 +38,8 @@ which keeps the lines of each input chunk that contain a text:
 
 Copy one, replace the `handle` function, and build the image. The example
 on this page, {{< repolink "examples/log-report/" >}}, uses `grep` as its
-middle step, in both languages.
+middle step, in both languages. [Getting started](/docs/getting-started/)
+builds and runs it.
 
 ## A run, step by step
 
@@ -220,9 +221,9 @@ to the manifests are refused.
 ### 10. Cleaning up
 
 The run's chunks under `runs/<uid>/` are deleted after `ttlAfterFinished`,
-or when the `StreamRun` is deleted. Results stay until `resultsTTL` has
-run out, 7 days by default, even if the `StreamRun` is deleted before
-that. `alpheus results gc` cleans up results that nothing else will.
+or when the `StreamRun` is deleted. Results are not: while the run exists,
+the controller deletes them when `resultsTTL` has run out, 7 days by
+default. Once the run is deleted, `alpheus results gc` does that instead.
 
 ## The rules a component follows
 
@@ -559,7 +560,9 @@ def handle(inp, out):
 
 The Go and Python versions of the log report give byte-for-byte the same
 result. {{< repolink "examples/log-report/test.sh" >}} checks that in
-local mode, and both have run on the test cluster.
+local mode. On the test cluster, testcase07 runs both templates in agent
+mode, one after the other, and kills a pod of each in the middle of the
+stream.
 
 ### Build the image
 

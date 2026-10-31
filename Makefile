@@ -4,8 +4,8 @@ all: generate vet check-deps test
 
 # Deepcopy functions and the CRD from the kubebuilder markers in api/, and
 # the controller's RBAC role from those in internal/controller. The Helm
-# chart gets a copy of both, and the Python template one of the component
-# contract.
+# chart gets a copy of both, the Python template one of the component
+# contract, and the website the CLI reference (WWW-4).
 generate:
 	go tool controller-gen object:headerFile=hack/boilerplate.go.txt paths=./api/...
 	go tool controller-gen crd paths=./api/... output:crd:artifacts:config=config/crd/bases
@@ -13,6 +13,7 @@ generate:
 	cp config/crd/bases/alpheus-dev.org_streamruns.yaml charts/alpheus/files/crd.yaml
 	cp config/rbac/role.yaml charts/alpheus/files/role.yaml
 	cp proto/component.proto templates/component-python/alpheus/component.proto
+	go run ./hack/clireference > www/site/content/docs/cli.md
 	$(MAKE) proto
 
 # Go code for proto/ in internal/pb, with buf and the generators in go.mod.
@@ -21,7 +22,7 @@ proto:
 
 # Fails when generated code is not up to date (GO-63).
 check-generated: generate
-	git diff --exit-code -- api config internal/pb charts/alpheus/files templates/component-python/alpheus/component.proto
+	git diff --exit-code -- api config internal/pb charts/alpheus/files templates/component-python/alpheus/component.proto www/site/content/docs/cli.md
 
 vet:
 	go vet ./...
