@@ -1,0 +1,28 @@
+# The log-report example: generate writes chunks of log lines, grep keeps
+# the ERROR lines in two replicas, and count totals the lines per level.
+# count's output goes nowhere else, so it is the run's result. Build the
+# images (see README.md), put their digests here, and create a Secret
+# alpheus-s3 with keys for the bucket.
+apiVersion: alpheus-dev.org/v1alpha1
+kind: StreamRun
+metadata:
+  name: log-report
+spec:
+  steps:
+    - name: generate
+      image: registry.example/generate@sha256:…
+      settings: {chunks: 20, lines: 5000}
+    - name: grep
+      image: registry.example/grep@sha256:…
+      replicas: 2
+      settings: {match: ERROR}
+    - name: count
+      image: registry.example/count@sha256:…
+  edges:
+    - {from: generate, to: grep}
+    - {from: grep, to: count}
+  chunks: {maxBytes: 64Mi, maxUnacked: 4}
+  storage:
+    endpoint: http://s3.example:3900
+    bucket: flows
+    secretRef: alpheus-s3

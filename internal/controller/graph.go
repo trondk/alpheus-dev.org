@@ -109,6 +109,19 @@ func newGraph(spec *v1alpha1.StreamRunSpec) (*graph, error) {
 	return g, nil
 }
 
+// ValidateGraph checks a run's steps and edges as the controller does
+// before it starts the run, for alpheus run and validate.
+func ValidateGraph(spec *v1alpha1.StreamRunSpec) error {
+	_, err := newGraph(spec)
+	return err
+}
+
+// EdgeName is an edge's name in storage and in status.edges.
+func EdgeName(e v1alpha1.Edge) string { return edgeName(withDefaults(e)) }
+
+// Replicas is how many replicas a step runs.
+func Replicas(s *v1alpha1.Step) int { return replicas(s) }
+
 func withDefaults(e v1alpha1.Edge) v1alpha1.Edge {
 	if e.Output == "" {
 		e.Output = chunk.DefaultOutput

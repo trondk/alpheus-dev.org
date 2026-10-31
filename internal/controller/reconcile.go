@@ -151,7 +151,10 @@ func (rc *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Res
 	return res, err
 }
 
-func terminal(p v1alpha1.RunPhase) bool {
+func terminal(p v1alpha1.RunPhase) bool { return Terminal(p) }
+
+// Terminal reports whether a run in phase p has finished.
+func Terminal(p v1alpha1.RunPhase) bool {
 	switch p {
 	case v1alpha1.RunSucceeded, v1alpha1.RunPartiallySucceeded, v1alpha1.RunFailed, v1alpha1.RunCancelled:
 		return true
@@ -171,7 +174,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, r *v1alpha1.StreamRun) (ctr
 	}
 	if !rc.Options.AllowTags {
 		for _, s := range r.Spec.Steps {
-			if !pinned(s.Image) {
+			if !Pinned(s.Image) {
 				rc.fail(ctx, r, fmt.Sprintf("step %s: image %s is not pinned by digest (@sha256:...)", s.Name, s.Image))
 				return ctrl.Result{}, nil
 			}
@@ -571,8 +574,15 @@ func (rc *Reconciler) store(ctx context.Context, r *v1alpha1.StreamRun) (store.S
 	if rc.Options.NewStore != nil {
 		return rc.Options.NewStore(ctx, r)
 	}
+	return OpenStore(ctx, rc.Client, r, rc.Options.StorageCAFile)
+}
+
+// OpenStore opens a run's storage with the keys in its storage Secret,
+// with results/ in the results bucket when the run has one (GO-129).
+// caFile is a CA bundle for the endpoint, or empty.
+func OpenStore(ctx context.Context, c client.Reader, r *v1alpha1.StreamRun, caFile string) (store.Store, error) {
 	var secret corev1.Secret
-	if err := rc.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: r.Spec.Storage.SecretRef}, &secret); err != nil {
+	if err := c.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: r.Spec.Storage.SecretRef}, &secret); err != nil {
 		return nil, fmt.Errorf("storage secret: %w", err)
 	}
 	cfg := store.S3Config{
@@ -581,7 +591,7 @@ func (rc *Reconciler) store(ctx context.Context, r *v1alpha1.StreamRun) (store.S
 		Region:    r.Spec.Storage.Region,
 		AccessKey: string(secret.Data["AWS_ACCESS_KEY_ID"]),
 		SecretKey: string(secret.Data["AWS_SECRET_ACCESS_KEY"]),
-		CAFile:    rc.Options.StorageCAFile,
+		CAFile:    caFile,
 	}
 	main, err := store.NewS3(cfg)
 	if err != nil || r.Spec.Storage.ResultsBucket == "" {

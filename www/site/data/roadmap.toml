@@ -35,5 +35,5 @@
   done = true
 
 [[steps]]
-  text = "The `alpheus` CLI, the Helm chart and the first release, `v0.1.0`."
+  text = "The `alpheus` CLI and the Helm chart, both built, and the first release, `v0.1.0`."
   done = false

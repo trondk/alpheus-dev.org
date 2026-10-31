@@ -22,6 +22,8 @@ also needs [buf](https://buf.build/docs/installation).
 | `make check-deps` | Fails if Alpheus depends on Parquet or Arrow; it never reads a chunk's content |
 | `make test` | Runs every test with the race detector |
 | `make test-chart` | Lints the Helm chart and checks what it renders; needs [Helm](https://helm.sh/docs/intro/install/) but no cluster |
+| `make test-templates` | Runs the Python component template and the log-report example in local mode, in containers; needs podman or docker |
+| `make cli` | Builds the `alpheus` CLI in `_out/bin` |
 
 `make test` needs no cluster and no S3. The agents and components run in
 one process against storage in memory, through pipelines of a few

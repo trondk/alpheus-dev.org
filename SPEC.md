@@ -1,10 +1,12 @@
 # Alpheus — implementeringsspecifikation (Go)
 
-Status: udkast, 2026-10-30. Trin 1–8 i afsnit 15 er bygget: API-typer og
+Status: udkast, 2026-10-31. Trin 1–8 i afsnit 15 er bygget: API-typer og
 CRD, chunks og lager, komponent-SDK'et, agenten, controlleren og
 end-to-end-tests på Kubernetes (Talos i en VM) med fan-out, fan-in,
-replikaer, genstart, backpressure og kaos. Tilbage er trin 9: CLI,
-Helm-chart og første udgivelse. Åbne spørgsmål står i afsnit 16.
+replikaer, genstart, backpressure og kaos. Af trin 9 er CLI, Helm-chart,
+skabeloner til komponenter i Go og Python og en guide til at skrive
+komponenter bygget; tilbage er første udgivelse. Åbne spørgsmål står i
+afsnit 16.
 
 Kravene GO-88 til GO-124 gør Alpheus formatuafhængigt: chunks er filer,
 som Alpheus flytter uden at læse dem, og Parquet og Arrow er ude af
@@ -69,14 +71,15 @@ Mapper markeret *(findes)* er bygget; resten er planlagt.
 ```
 alpheus/
 ├── SPEC.md                denne specifikation (findes)
-├── Makefile               generate, proto, test, test-crd, test-s3, test-agent-s3 (findes)
+├── Makefile               generate, proto, test, test-crd, test-chart, cli, test-s3, test-agent-s3, e2e (findes)
 ├── buf.gen.yaml           kodegenerering fra proto/ (findes)
 ├── api/v1alpha1/          StreamRun-typer med kubebuilder-markører (findes)
 ├── cmd/
-│   ├── alpheus/           CLI
+│   ├── alpheus/           CLI'ens binær (findes)
 │   ├── alpheus-controller/ controllerens binær (findes)
 │   └── alpheus-agent/     agentens binær (findes)
 ├── internal/
+│   ├── cli/               CLI'ens kommandoer (findes)
 │   ├── controller/        reconcile-løkke, pod-spec, status, signal-CA og hub (findes)
 │   ├── agent/             socket-server, ind- og udgange, genstart (findes)
 │   ├── chunk/             navngivning, manifest, ack-filer, checksum (findes)
@@ -92,6 +95,8 @@ alpheus/
 │   └── samples/           eksempler, bl.a. testcase03 (findes)
 ├── hack/                  boilerplate, test-crd.sh, test-chart.sh, images.sh og e2e.sh (findes)
 ├── charts/alpheus/        Helm-chart: CRD, RBAC, controller og hub-Service (findes)
+├── templates/             skabeloner til komponenter: component-go og component-python (findes)
+├── examples/log-report/   eksemplet fra komponent-guiden, i Go og Python (findes)
 ├── test/
 │   ├── components/        testkomponenter: bench (findes), filter og sum i CSV (findes)
 │   ├── e2e/               testcase01 til testcase06 (findes), og fejltests
@@ -121,7 +126,7 @@ stadig kun foreslået.
 | S3 | `github.com/minio/minio-go/v7` | Apache 2.0 | Godkendt, i brug (v7.4.1) |
 | gRPC | `google.golang.org/grpc`, `google.golang.org/protobuf` | Apache 2.0 / BSD | Godkendt, i brug (v1.83.2 og v1.36.12) |
 | Protobuf-generering | `protoc-gen-go`, `protoc-gen-go-grpc` (kun build, `go tool`), kørt af `buf` | BSD / Apache 2.0 | Godkendt sammen med gRPC (v1.36.12 og v1.6.2) |
-| CLI | `github.com/spf13/cobra` | Apache 2.0 | Foreslået (trin 9) |
+| CLI | `flag` fra standardbiblioteket; YAML med `sigs.k8s.io/yaml`, som Kubernetes-klienten allerede trækker med | BSD / Apache 2.0 | I brug. Cobra blev ikke godkendt |
 | Metrics | `github.com/prometheus/client_golang` | Apache 2.0 | Foreslået |
 | Logning | `log/slog` fra standardbiblioteket | BSD | I brug |
 | Test | `sigs.k8s.io/controller-runtime/pkg/envtest`, `setup-envtest` (kun build, `go tool`) | Apache 2.0 | Godkendt, i brug (v0.25.2; Kubernetes 1.37.0) |
@@ -206,7 +211,7 @@ en strøm med manifest, ligesom en kant, men under
 | GO-78 | SKAL | Resultater slettes ikke af `ttlAfterFinished` eller finalizeren (GO-20). De slettes, når `spec.resultsTTL` er udløbet, regnet fra `finishedAt`. Standard er 7 dage. Værdien `0` betyder, at controlleren aldrig sletter dem, og skal angives eksplicit. |
 | GO-98 | SKAL | Agenten skriver `results/<run>/<uid>/run.json` med runnets navn, namespace, UID, `finishedAt` og `resultsTTL`, før den første resultat-chunk skrives. Så kan resultater findes og ryddes, også efter at StreamRun-objektet er slettet. |
 | GO-129 | SKAL | Resultater kan ligge i deres egen bucket: `spec.storage.resultsBucket` og `spec.storage.resultsSecretRef`. Agenterne skriver dem med `secretRef`, der skal kunne skrive begge buckets, og `status.results` peger på `resultsSecretRef`, en nøgle, der kun kan læse resultat-bucketen. Uden `resultsBucket` ligger resultater i `bucket`, og `status.results` peger på `secretRef`, der kan skrive hele bucketen; dokumentationen siger det tydeligt. Nøgler i S3-lagre som Garage gælder pr. bucket, ikke pr. prefix, så en egen bucket er den måde, læsere kan nøjes med læseadgang. Alt under `results/<run>/<uid>/` ligger i resultat-bucketen: resultaterne, `run.json`, resuméet og fejlloggen (`_errors/`); `runs/<uid>/` bliver i `bucket`. Agent og controller bruger ét lager, der sender nøgler efter prefix (`store.WithResults`), og agenten får bucketen i `ALPHEUS_S3_RESULTS_BUCKET`. `resultsSecretRef` kræver `resultsBucket` (CEL). |
-| GO-99 | BØR | `alpheus results gc` finder resultater, hvis TTL er udløbet, eller hvis StreamRun-objektet ikke længere findes, og sletter dem efter bekræftelse. Med `--dry-run` vises kun, hvad der ville blive slettet. |
+| GO-99 | BØR | `alpheus results gc` finder resultater, hvis TTL er udløbet, regnet fra `finishedAt` i `run.json`, og sletter dem efter bekræftelse (eller med `--yes`). Resultater, hvis StreamRun-objektet ikke længere findes, vises, men slettes kun med `--orphans`, da resultater er beregnet til at overleve objektet (GO-78). Resultater med `resultsTTL` 0 og uden `run.json` slettes aldrig. Med `--dry-run` vises kun, hvad der ville blive slettet. |
 | GO-79 | SKAL | `status.results` har én post pr. resultat med S3-endpoint, bucket, region, prefix, navnet på Secret'en med nøglerne til at læse det og antal chunks, bytes og komponentens committede tællere (10.1). Det er det, der skal til for at hente resultatet, og `alpheus get` viser det. |
 
 Secret'en i `status.results` er den samme som agenternes, med adgang til
@@ -476,6 +481,29 @@ API'et. De bruges ikke til andet.
 | `alpheus results gc [--dry-run]` | Find og slet resultater med udløbet TTL eller uden StreamRun (GO-99) |
 | `alpheus version` | Vis CLI-, controller- og CRD-version |
 
+CLI'en er skrevet med standardbibliotekets `flag` i `internal/cli`, så den
+kan testes mod envtest (`make test`), og bygges med `make cli`. Flag kan
+stå før og efter argumenterne. Alle kommandoer har `--kubeconfig`,
+`--context`, `-n` og `-o`. Det, der er værd at vide om de enkelte:
+
+- `run` og `validate` læser filen strengt, så et felt med en stavefejl
+  er en fejl, og kører controllerens egne tjek af grafen før API-serveren.
+  Et image uden digest giver en advarsel, fordi controlleren afviser det
+  uden `-allow-tags`. `validate` lader API-serveren tjekke CRD'ens skema
+  og CEL-regler med en dry-run; `--local` springer det over.
+- `watch` udskriver hele status ved hver ændring (med `-o json` ét objekt
+  pr. linje) og slutter, når runnet er færdigt, med exit-kode 0 kun ved
+  `Succeeded`, så scripts kan vente på et run med den.
+- `logs` viser komponenten eller med `-c agent` agenten, for alle trin
+  eller ét, med `--follow` og `--tail`.
+- `chunks` læser manifesterne for en kant eller et resultat
+  (`<trin>.<udgang>`) med nøglerne i runnets storage-Secret. Er
+  endpointet kun nåeligt i klyngen, angives et andet med `--endpoint`.
+- `results gc` får lageret med flag (`--endpoint`, `--bucket`,
+  `--secret` m.fl.), da StreamRun-objektet kan være væk.
+- `version` viser CLI'ens version, som Go stempler i binæren, og
+  controllerens og CRD'ens, hvis klyngen kan læses.
+
 | ID | Niveau | Krav |
 |---|---|---|
 | GO-43 | SKAL | CLI'en bruger brugerens kubeconfig og har ingen egen server eller egen login. |
@@ -520,7 +548,7 @@ func main() {
 | GO-48 | SKAL | Komponenter med tilstand på tværs af chunks får et `in.OnEOS`-hook til at skrive deres resultat til sidst. |
 | GO-49 | BØR | Samme komponent-binær kan køre i MCPipes batch-mode på Argo ved at SDK'et genkender miljøet og læser én stor chunk. |
 | GO-86 | SKAL | En output-chunk lukkes, når komponenten kalder `Close` på den, eller automatisk, når den input-chunk, den blev lavet af, er færdig (`Done`). `Flush` og `maxRows` fjernes fra komponent-API'et og fra StreamRun. |
-| GO-87 | SKAL | Lokal testmode vælges med `ALPHEUS_MODE=local` og mapperne `ALPHEUS_LOCAL_INPUT` (alle filer, læst i navneorden) og `ALPHEUS_LOCAL_OUTPUT` (én mappe pr. udgang, med manifest-formatet fra 7.3, og filerne `_summary.json` med tællere og antal fejl og `_errors.jsonl` med fejlloggen). `ALPHEUS_SETTINGS` er trinnets settings som JSON, og `ALPHEUS_REPLICA` og `ALPHEUS_REPLICAS` vælger, hvilke chunks replikaen læser (GO-76). Komponenttests kalder `sdk.RunLocal` direkte. |
+| GO-87 | SKAL | Lokal testmode vælges med `ALPHEUS_MODE=local` og mapperne `ALPHEUS_LOCAL_INPUT` (alle filer undtagen `manifest.json` og dets segmenter, læst i navneorden, så et trins udgangsmappe kan være næste trins input) og `ALPHEUS_LOCAL_OUTPUT` (én mappe pr. udgang, med manifest-formatet fra 7.3, og filerne `_summary.json` med tællere og antal fejl og `_errors.jsonl` med fejlloggen). `ALPHEUS_SETTINGS` er trinnets settings som JSON, og `ALPHEUS_REPLICA` og `ALPHEUS_REPLICAS` vælger, hvilke chunks replikaen læser (GO-76). Komponenttests kalder `sdk.RunLocal` direkte. |
 
 
 ### 10.1 Tællere, fejl og fremdrift
@@ -933,12 +961,27 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    `make e2e` installerer nu controlleren med chartet i stedet for
    kustomize, med `registry` sat til Zot; kustomize-manifesterne
    (`config/manager`, `config/default`) er fjernet. Chartet er skubbet
-   til Zot som OCI-artefakt og hentet derfra igen. Komponenter i andre
+   til Zot som OCI-artefakt og hentet derfra igen. CLI'en (9) er bygget
+   med standardbibliotekets `flag`, testet mod envtest og prøvet mod
+   testklyngen: `run`, `watch`, `get`, `logs`, `chunks`, `cancel`,
+   `validate`, `results gc --dry-run` og `version`. Komponenter i andre
    sprog end Go bruger gRPC-kontrakten (`proto/component.proto`) og den
-   dokumenterede lokale mode; der er intet Python-SDK i `v0.1.0`. En
-   Python-referencekomponent på ca. 200 linjer i `test/components/`
-   viser, at kontrakten er sprogneutral, uden løfte om et vedligeholdt
-   SDK.
+   dokumenterede lokale mode; der er intet Python-SDK i `v0.1.0`.
+   Python-referencen er blevet en skabelon: `templates/component-python`
+   har et lille modul (`alpheus/`, ca. 330 linjer) med kontrakten og
+   lokal mode, uden løfte om et vedligeholdt SDK, og `templates/component-go`
+   er det samme i Go. Begge er komponenten `grep`. Komponent-guiden på
+   hjemmesiden (`/docs/components/`) gennemgår et run trin for trin med
+   eksemplet `examples/log-report` (kilde, `grep` med to replikaer og et
+   tilstandsfuldt trin) i begge sprog. Go-skabelonens test kører med
+   `make test`, og `make test-templates` kører Python-skabelonen og
+   eksemplet i lokal mode i containere og tjekker, at Go og Python giver
+   samme resultat. På testklyngen er begge skabeloner kørt i agent-mode
+   mellem `bench`-kilde og -sink, og eksemplet er kørt i begge sprog med
+   byte-identisk resultat. Fundet undervejs: lokal mode læste en
+   udgangsmappes `manifest.json` som en chunk, så et trins output ikke
+   kunne bruges som næste trins input; manifest-filerne springes nu over
+   (GO-87).
 
 En STOMP-driver til en ekstern broker (fx Artemis) var planlagt som
 trin 9 med GO-39 og GO-42, men er taget ud af planen: signaler gør

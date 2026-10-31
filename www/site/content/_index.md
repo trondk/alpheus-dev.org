@@ -32,7 +32,7 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
 
 ## A minimal flow
 
-A run is one `StreamRun` resource. {{< planned >}}Six test flows run end to end on a test cluster, including restarts and pods killed at random, but no images are published yet. The `alpheus` CLI comes later; until then `kubectl apply -f flow.yaml` does the same.{{< /planned >}}
+A run is one `StreamRun` resource. {{< planned >}}Six test flows run end to end on a test cluster, including restarts and pods killed at random, but nothing is released yet: the CLI is built from source with `make cli`, and `kubectl apply -f flow.yaml` does the same as `alpheus run`.{{< /planned >}}
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1
@@ -61,7 +61,7 @@ $ alpheus run -f flow.yaml
 
 ## Install
 
-One Helm chart installs the controller and the CRD. {{< planned >}}The chart is not published yet.{{< /planned >}}
+One Helm chart installs the controller and the CRD. {{< planned >}}The chart is built and tested on the test cluster, but not published yet.{{< /planned >}}
 
 ```console
 $ helm install alpheus oci://ghcr.io/alpheus-dev/charts/alpheus \
@@ -73,3 +73,4 @@ registry, such as a Zot mirror in an air-gapped cluster, with
 `--set registry=registry.example:5000`.
 
 {{% ifpage "/docs/getting-started/" %}}[Getting started](/docs/getting-started/) walks through a first flow.{{% /ifpage %}}
+{{% ifpage "/docs/components/" %}}[Writing components](/docs/components/) shows how to write the steps of a flow in Go or Python.{{% /ifpage %}}

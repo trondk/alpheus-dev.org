@@ -115,6 +115,23 @@ func TestCopyThrough(t *testing.T) {
 	}
 }
 
+// An output folder, with its manifest, can be the next step's input: the
+// manifest is not a chunk.
+func TestChainedSteps(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	in := inputs(t, "csv", "a\n", "b\n")
+	if err := sdk.RunLocal(context.Background(), sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: in}, OutputDir: first}, copyThrough); err != nil {
+		t.Fatal(err)
+	}
+	cfg := sdk.LocalConfig{Inputs: map[string]string{sdk.DefaultPort: filepath.Join(first, "default")}, OutputDir: second}
+	if err := sdk.RunLocal(context.Background(), cfg, copyThrough); err != nil {
+		t.Fatal(err)
+	}
+	if got := contents(t, second, "default"); !slices.Equal(got, []string{"a\n", "b\n"}) {
+		t.Errorf("chunks of the second step %q", got)
+	}
+}
+
 // A source's chunks are committed when closed, with the counts reported
 // since the last one (GO-91, GO-115).
 func TestSourceCommitsOnClose(t *testing.T) {

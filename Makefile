@@ -1,16 +1,18 @@
-.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-s3 test-agent-s3 vet images e2e bench
+.PHONY: all generate proto check-generated check-deps test test-crd test-chart test-templates cli test-s3 test-agent-s3 vet images e2e bench
 
 all: generate vet check-deps test
 
 # Deepcopy functions and the CRD from the kubebuilder markers in api/, and
 # the controller's RBAC role from those in internal/controller. The Helm
-# chart gets a copy of both.
+# chart gets a copy of both, and the Python template one of the component
+# contract.
 generate:
 	go tool controller-gen object:headerFile=hack/boilerplate.go.txt paths=./api/...
 	go tool controller-gen crd paths=./api/... output:crd:artifacts:config=config/crd/bases
 	go tool controller-gen rbac:roleName=alpheus-controller paths=./internal/controller/... output:rbac:artifacts:config=config/rbac
 	cp config/crd/bases/alpheus-dev.org_streamruns.yaml charts/alpheus/files/crd.yaml
 	cp config/rbac/role.yaml charts/alpheus/files/role.yaml
+	cp proto/component.proto templates/component-python/alpheus/component.proto
 	$(MAKE) proto
 
 # Go code for proto/ in internal/pb, with buf and the generators in go.mod.
@@ -19,10 +21,14 @@ proto:
 
 # Fails when generated code is not up to date (GO-63).
 check-generated: generate
-	git diff --exit-code -- api config internal/pb charts/alpheus/files
+	git diff --exit-code -- api config internal/pb charts/alpheus/files templates/component-python/alpheus/component.proto
 
 vet:
 	go vet ./...
+
+# The alpheus CLI, for this machine, in _out/bin.
+cli:
+	go build -o _out/bin/alpheus ./cmd/alpheus
 
 # The controller's tests run against kube-apiserver and etcd from envtest,
 # which setup-envtest downloads the first time.
@@ -39,6 +45,12 @@ test-crd: generate
 # renders for the registry, digests and the hub.
 test-chart: generate
 	hack/test-chart.sh
+
+# Runs the Python template and the log-report example in local mode in
+# containers (podman or docker); the Go template's test runs with make test.
+test-templates:
+	templates/component-python/test.sh
+	examples/log-report/test.sh
 
 # Runs internal/store's tests against Garage in the Vagrant test cluster,
 # over HTTPS through the gateway, trusting the test CA.

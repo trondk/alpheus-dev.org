@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -43,8 +44,10 @@ const (
 // LocalConfig configures local mode (GO-47, GO-87).
 type LocalConfig struct {
 	// Inputs maps each port to a folder of input chunks. Every file in a
-	// folder is a chunk; they are read in name order, and the n-th file
-	// is chunk n. No inputs means the component is a source.
+	// folder is a chunk, except manifest.json and its segments, so another
+	// step's output folder can be an input; they are read in name order,
+	// and the n-th file is chunk n. No inputs means the component is a
+	// source.
 	Inputs map[string]string
 
 	// OutputDir gets one folder per output, with the output's chunks as
@@ -150,6 +153,11 @@ func newLocal(cfg LocalConfig) (*local, error) {
 	return l, nil
 }
 
+// manifestFile matches the manifest and its sealed segments, which local
+// mode writes next to the chunks, so an output folder can be the next
+// step's input folder.
+var manifestFile = regexp.MustCompile(`^manifest(-\d+)?\.json$`)
+
 // readInputs lists the chunks of one port that this replica gets.
 func readInputs(port, dir string, replica, replicas int) ([]Chunk, error) {
 	entries, err := os.ReadDir(dir)
@@ -159,7 +167,7 @@ func readInputs(port, dir string, replica, replicas int) ([]Chunk, error) {
 	var chunks []Chunk
 	n := int64(0)
 	for _, e := range entries { // os.ReadDir sorts by name
-		if !e.Type().IsRegular() {
+		if !e.Type().IsRegular() || manifestFile.MatchString(e.Name()) {
 			continue
 		}
 		n++

@@ -228,5 +228,5 @@ func containerSecurity() *corev1.SecurityContext {
 	}
 }
 
-// pinned reports whether an image is pinned by digest (GO-26).
-func pinned(image string) bool { return strings.Contains(image, "@sha256:") }
+// Pinned reports whether an image is pinned by digest (GO-26).
+func Pinned(image string) bool { return strings.Contains(image, "@sha256:") }
