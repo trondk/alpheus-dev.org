@@ -1,7 +1,8 @@
 # Alpheus
 
 Alpheus streams files between containers on Kubernetes, with nothing
-but object storage in between.
+but object storage in between. It is a file mover, not a data engine: a
+chunk is a file in any format, and Alpheus never opens it.
 
 ```
    ~~~~~~~~~~~\                                  /~~~~~~~~~>
@@ -51,6 +52,13 @@ appears in the next.
   result. It is kept after the run is cleaned up, and the run's status
   says where it is and which credentials read it.
 
+**Alpheus moves files; it does not process data.** A chunk is a file
+in whatever format the components agree on: CSV, Parquet, JSON lines,
+images, archives. Alpheus stores it, lists it in a manifest with its size
+and checksum, and hands it to the next step, but never opens it. It has
+no schema, no rows and no Arrow or Parquet code, and CI checks that it
+never gets any. What is inside a chunk is entirely up to the components.
+
 Alpheus needs only the Kubernetes API and an S3 endpoint: no host
 access, no privileged containers, no node changes. It is designed to
 run on immutable distributions such as Talos.
@@ -68,25 +76,48 @@ run in-house, and immutable infrastructure, where nothing may touch the
 nodes. If you can run Kubernetes and an S3-compatible store such as
 Garage or MinIO, you can run Alpheus.
 
-Other tools do part of this:
 
-| | Steps run concurrently | Between steps | Extra infrastructure |
-|---|---|---|---|
-| **Alpheus** | Yes, chunk by chunk | Files in object storage, any format | None beyond S3 |
-| [Argo Workflows](https://argoproj.github.io/workflows/) with artifacts | No: a step starts when the one before it has finished | Artifacts in object storage | Argo's controller and server |
-| [Pachyderm](https://www.pachyderm.com/) | Within a job, but a downstream pipeline starts on its input's finished commit | Versioned files in object storage | Pachyderm's own services and database |
-| [Numaflow](https://numaflow.numaproj.io/) | Yes, message by message | Messages in an inter-step buffer | A JetStream cluster for the buffer |
+## How it compares
 
-Pick one of those when you need what it was built for:
-- **Argo Workflows** is the right choice for batch jobs where a step
-  needs all of its input before it starts.
-- **Pachyderm** is the right choice when you need data versioning and
-  lineage.
-- **Numaflow** is the right choice for event streams with low latency.
+| | Steps run concurrently | What passes between steps | Runs besides Kubernetes and S3 | Lifetime |
+|---|---|---|---|---|
+| **Alpheus** | Yes, chunk by chunk | Files of any format and size, in object storage | Nothing | A run, which starts and ends |
+| [Argo Workflows](https://argoproj.github.io/workflows/) | No: a step starts when the steps before it have finished | Artifacts in object storage | Argo's controller | A workflow run |
+| [Pachyderm](https://www.pachyderm.com/) | A pipeline starts on its input's finished commits | Versioned files in object storage | Pachyderm's services and a database | Long-lived pipelines over versioned data |
+| [Numaflow](https://numaflow.numaproj.io/) | Yes, message by message | Messages in an inter-step buffer | Numaflow's controller and a JetStream cluster | Long-running pipelines |
+| Diskless Kafka | Producers and consumers run at the same time | Records in a log kept in object storage | Brokers or agents and a metadata store | Long-lived topics |
 
-Pick Alpheus when large files should flow through a pipeline of
-containers as they are produced, and object storage is the only shared
-service you want to depend on.
+"Diskless Kafka" means Kafka-compatible brokers that keep their log in
+object storage instead of on local disks: products such as WarpStream,
+AutoMQ and Bufstream, and Apache Kafka's own diskless topics
+([KIP-1150](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1150%3A+Diskless+Topics)),
+which were accepted in March 2026 but are not yet in a stable release.
+
+Use one of them instead when it fits better:
+
+- **Argo Workflows**, when a step needs all of its input before it can
+  start, as a sort, a global join or model training does, or when you need
+  a general workflow engine: schedules, conditions, loops, retries per step
+  and approvals. Alpheus only streams; it has none of that.
+- **Pachyderm**, when you need versioned data and lineage: which version
+  of which input made which output, and reprocessing only what changed
+  when an input changes. Alpheus keeps no history between runs.
+- **Numaflow**, when your data is a stream of small events rather than
+  files, and you need low latency, windowed aggregation or pipelines that
+  scale with their load and run for ever. Alpheus moves chunks of
+  megabytes to gigabytes, with latency per chunk in the hundreds of
+  milliseconds, and does not autoscale.
+- **Diskless Kafka**, when you need a durable log that many independent
+  consumers read and replay at their own pace, ordering by key, retention,
+  or the Kafka ecosystem: Connect, Streams and Flink. A run in Alpheus has
+  one set of consumers, its own steps, and its streams are deleted after
+  the run; only its results stay.
+
+Use Alpheus when large files should flow through a pipeline of
+containers as they are produced, each chunk processed exactly once even
+when pods die, and object storage is the only shared service you want to
+run. Alpheus is also young: it is in its design phase, and the tools
+above are in production use.
 
 
 ## What it looks like
@@ -145,9 +176,14 @@ languages; the code is in [`examples/log-report/`](examples/log-report/).
 
 ## What it is not
 
+- **Not a dataframe or Arrow engine.** Alpheus never reads the data.
+  Components that exchange Parquet or Arrow IPC files can use Alpheus to
+  move them, but the processing is theirs; for query engines over Arrow,
+  look at DataFusion, Polars or DuckDB.
 - **Not a low-latency event processor.** Data moves in chunks through
-  object storage, so latency is measured in seconds, not milliseconds.
-  For sub-second event streams, look at Apache Flink or similar.
+  object storage. On the test cluster a chunk of 4 MiB takes a few
+  hundred milliseconds from one step to the next. For event streams with
+  latency in milliseconds, look at Numaflow, Apache Flink or Kafka.
 - **Not a batch scheduler.** For jobs where one step finishes before the
   next starts, Argo Workflows already does that well.
 - **Not a data platform.** Catalogs, access policies, credentials and
@@ -208,9 +244,10 @@ repository is the only copy, and issues can be opened here.
 
 ## Go module
 
-The module path will be `alpheus-dev.org/alpheus`, served as a vanity
-import from the website, so imports stay the same wherever the code is
-hosted.
+The module path is `alpheus-dev.org/alpheus`, served as a vanity import
+from the website, so imports stay the same wherever the code is hosted.
+Only `api/` and `sdk/` are public; everything under `internal/` may
+change without notice.
 
 
 ## Contributing

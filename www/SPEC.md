@@ -39,6 +39,7 @@ saglig, konkret og uden salgssprog.
 ```
 /                         Forside
 /docs/                    Dokumentation (pr. version)
+  compare/                Sammenligning med Argo, Pachyderm, Numaflow og diskless Kafka, og hvornår man skal vælge dem (findes; samme tekst som i README)
   getting-started/        Installation og første flow (findes: fra kilden på testklyngen)
   concepts/               StreamRun, trin, kanter, chunks, agent, signaler
   reference/streamrun/    CRD-reference, genereret fra api/v1alpha1
@@ -73,9 +74,9 @@ I rækkefølge, i én spalte:
 2. **Floden.** Sidens signatur (se 4.4): en linje, der løber, forsvinder
    under en horisont og dukker op igen, med en kort tekst om myten.
 3. **Hvad det gør**, i tre konkrete udsagn:
-   - Every step runs at the same time; data moves as chunks in S3, in any file format.
+   - Every step runs at the same time; data moves between them as chunks in S3.
+   - A chunk is a file in any format: CSV, Parquet, images, archives. Alpheus moves it and never opens it; it is not a dataframe or Arrow engine.
    - No message broker for data, only Kubernetes and an S3 endpoint.
-   - The same component runs in batch and in streaming.
 4. **Hvordan det virker**: en tegning af et run med tre trin på
    Kubernetes (WWW-47) og derefter en almindelig liste: controlleren
    kører trinnene som pods, komponenten læser og skriver filer, agenten

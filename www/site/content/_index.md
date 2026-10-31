@@ -6,9 +6,9 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
 
 ## What it does
 
-- Every step runs at the same time; data moves as chunks in S3, in any file format.
+- Every step runs at the same time; data moves between them as chunks in S3.
+- A chunk is a file in any format: CSV, Parquet, images, archives. Alpheus moves it and never opens it; it is not a dataframe or Arrow engine.
 - No message broker for data, only Kubernetes and an S3 endpoint.
-- The same component runs in batch and in streaming. {{% planned %}}Batch mode is planned; today components run in streaming only.{{% /planned %}}
 
 ## How it works
 

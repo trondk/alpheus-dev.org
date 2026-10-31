@@ -36,7 +36,8 @@ spec:
       openAPIV3Schema:
         description: |-
           StreamRun is one run of a flow: a graph of steps that run at the same
-          time and exchange Parquet chunks through object storage.
+          time and pass chunks to each other through object storage. A chunk is a
+          file in any format; Alpheus moves it and never reads it.
 
           Create it to start the run, read its status to follow it, set
           spec.cancel to stop it, and delete it to clean up.
