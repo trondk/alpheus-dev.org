@@ -20,6 +20,8 @@
 <a class="skip" href="#main">Skip to content</a>
 
 <header class="site">
+  {{- /* Back to the front page from every page; the front page has the name as its heading. */}}
+  {{ if not .IsHome }}<a class="home" href="{{ "/" | relURL }}">{{ partial "logo.html" (dict "width" 136 "alt" "Alpheus, to the front page") }}</a>{{ end }}
   <nav aria-label="Main">
     {{ partial "menu.html" site.Menus.main }}
   </nav>

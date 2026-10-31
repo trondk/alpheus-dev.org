@@ -174,8 +174,8 @@ Alpheus gør med data mellem trin.
 |---|---|---|
 | WWW-13 | SKAL | Floden er inline SVG med `role="img"` og en tekstbeskrivelse. |
 | WWW-14 | SKAL | Floden tegnes op én gang ved indlæsning (stroke-animation, under 2 sekunder) og står derefter stille. Med `prefers-reduced-motion` vises den færdig uden animation. |
-| WWW-15 | SKAL | Ingen anden dekorativ animation på siden. |
-| WWW-16 | BØR | Samme linje i lille udgave bruges som logo og favicon. |
+| WWW-15 | SKAL | Ingen anden dekorativ animation på siden end floden og logoet på forsiden (4.6). Logoet på forsiden er en GIF, hvor floden tegner sig selv og pilen kommer til sidst, én gang ved indlæsning, hvorefter det står stille som det færdige logo. Med `prefers-reduced-motion` vises det statiske logo i stedet. |
+| WWW-16 | SKAL | Logoet er logo 4 (4.6): flodens linje i et afrundet kvadrat og navnet. Mærket alene er favicon. |
 | WWW-47 | SKAL | Tegningen under "Hvordan det virker" viser et run på Kubernetes i flodens sprog: StreamRun og controller med signal-hub'en øverst, en pod pr. trin med komponent og agent, og under horisonten objektlageret, hvor data løber som floden fra agent til agent. Den er inline SVG med `role="img"`, titel og beskrivelse, står stille (WWW-15), bruger kun farverne i 4.2 i begge temaer og har større tekst på telefoner. Listen under den siger det samme i tekst. |
 
 ### 4.5 Layout
@@ -186,6 +186,29 @@ Alpheus gør med data mellem trin.
 - Dokumentationen har en venstre navigation, der folder sig sammen til
   en menu på telefoner.
 
+
+### 4.6 Logoet
+
+Logoet er flodens linje, tegnet kraftigt i et afrundet kvadrat i
+Grundvand, med navnet `alpheus` med små bogstaver i fed Atkinson
+Hyperlegible ved siden af. En udgave har mottoet *PER SAXA FLUIT* ("den
+løber gennem klipperne", efter floden gennem Arkadiens kalksten) under
+navnet. Kilden er `logo/` i repo'ets rod: `generate.py` tegner alle
+udgaver og skriver hjemmesidens kopier og favicon i temaets `static/`,
+og `animate.sh` laver GIF'erne.
+
+| Fil | Bruges til |
+|---|---|
+| `4-modern.svg`, `4-modern-dark.svg` | Sidehovedet på alle sider undtagen forsiden; `-dark` i mørkt tema |
+| `4-modern-motto.svg`, `4-modern-motto-dark.svg` | Forsidens overskrift med `prefers-reduced-motion` |
+| `4-modern-motto.gif`, `4-modern-motto-dark.gif` | Forsidens overskrift, animeret én gang (WWW-15); hjemmesidens kopi har ingen loop-blok |
+| `4-modern.gif`, `4-modern-dark.gif` | README, præsentationer og lignende; GIF'erne i `logo/` kører i ring |
+| `1-roundel.svg` | Et rundt emblem med navn og motto, til klistermærker; ikke på siden |
+
+| ID | Niveau | Krav |
+|---|---|---|
+| WWW-48 | SKAL | Logoet er et billede med `alt`-tekst: forsidens overskrift har teksten "Alpheus", og logoet i sidehovedet linker til forsiden. Det mørke tema får filerne med lys tekst via `<picture>`. |
+| WWW-49 | SKAL | En GIF har ingen delvis gennemsigtighed, så hver GIF findes med temaets lyse og mørke baggrund. Forsidens vægt (WWW-26) tæller kun den største af et `<picture>`s valgmuligheder, da browseren henter én. |
 
 ## 5. Vanity import for Go
 

@@ -9,11 +9,11 @@ This page installs Alpheus from source, runs the example flow from
 [Writing components](/docs/components/), and shows how to follow it and
 find its result.
 
-{{< planned >}}Nothing is released yet, so there are no images to pull and
+{{% planned %}}Nothing is released yet, so there are no images to pull and
 no published chart. This page builds everything from the repository and
 uses the local test cluster from [Development](/development/), which has
 an S3 store (Garage) and a registry (Zot). Once `v0.1.0` is out, one
-`helm install` replaces the first steps.{{< /planned >}}
+`helm install` replaces the first steps.{{% /planned %}}
 
 ## What you need
 

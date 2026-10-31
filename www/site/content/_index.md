@@ -8,7 +8,7 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
 
 - Every step runs at the same time; data moves as chunks in S3, in any file format.
 - No message broker for data, only Kubernetes and an S3 endpoint.
-- The same component runs in batch and in streaming. {{< planned >}}Batch mode is planned; today components run in streaming only.{{< /planned >}}
+- The same component runs in batch and in streaming. {{% planned %}}Batch mode is planned; today components run in streaming only.{{% /planned %}}
 
 ## How it works
 
@@ -32,7 +32,7 @@ myth: "In Greek myth, the river Alpheus runs through the limestone of Arcadia, d
 
 ## A minimal flow
 
-A run is one `StreamRun` resource. {{< planned >}}Seven test flows run end to end on a test cluster, including restarts and pods killed at random, but nothing is released yet: the CLI is built from source with `make cli`, and `kubectl apply -f flow.yaml` does the same as `alpheus run`.{{< /planned >}}
+A run is one `StreamRun` resource. {{% planned %}}Seven test flows run end to end on a test cluster, including restarts and pods killed at random, but nothing is released yet: the CLI is built from source with `make cli`, and `kubectl apply -f flow.yaml` does the same as `alpheus run`.{{% /planned %}}
 
 ```yaml
 apiVersion: alpheus-dev.org/v1alpha1
@@ -66,7 +66,7 @@ in Go and in Python.
 
 ## Install
 
-One Helm chart installs the controller and the CRD. {{< planned >}}The chart is built and tested on the test cluster, but not published yet.{{< /planned >}}
+One Helm chart installs the controller and the CRD. {{% planned %}}The chart is built and tested on the test cluster, but not published yet.{{% /planned %}}
 
 ```console
 $ helm install alpheus oci://ghcr.io/alpheus-dev/charts/alpheus \

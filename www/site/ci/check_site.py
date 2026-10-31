@@ -25,12 +25,31 @@ LINK_REFERENCES = {"canonical", "alternate", "license", "author", "me"}
 
 
 class Resources(HTMLParser):
+    """Collects what a page makes the browser fetch. The sources and the
+    image of a <picture> are one choice: the browser loads one of them, so
+    they are kept together in pictures as well as in urls."""
+
     def __init__(self):
         super().__init__()
         self.urls = []
+        self.pictures = []
+        self._picture = None
+
+    def handle_endtag(self, tag):
+        if tag == "picture" and self._picture is not None:
+            self.pictures.append(self._picture)
+            self._picture = None
 
     def handle_starttag(self, tag, attrs):
+        if tag == "picture":
+            self._picture = []
         attrs = dict(attrs)
+        before = len(self.urls)
+        self._starttag(tag, attrs)
+        if self._picture is not None:
+            self._picture += self.urls[before:]
+
+    def _starttag(self, tag, attrs):
         if tag == "link" and set((attrs.get("rel") or "").split()) <= LINK_REFERENCES:
             return
         for name in RESOURCE_ATTRS.get(tag, []):
@@ -73,13 +92,19 @@ for root, _, files in os.walk(PUBLIC):
 
 # Weight of the front page: the HTML, everything it references, and every
 # file its stylesheets reference. Counting every font is stricter than
-# what a browser actually fetches.
+# what a browser actually fetches. Of a <picture>, only the largest choice
+# counts, since the browser loads one.
 index = os.path.join(PUBLIC, "index.html")
 parser = Resources()
 parser.feed(open(index, encoding="utf-8").read())
 files = {index}
+in_pictures = {u for p in parser.pictures for u in p}
 for url in parser.urls:
-    files.add(local_path(url, "/"))
+    if url not in in_pictures:
+        files.add(local_path(url, "/"))
+for picture in parser.pictures:
+    choices = [local_path(u, "/") for u in picture]
+    files.add(max(choices, key=lambda f: os.path.getsize(f) if os.path.exists(f) else 0))
 for css in [f for f in list(files) if f.endswith(".css")]:
     css_url = "/" + os.path.relpath(css, PUBLIC)
     files.update(local_path(u, css_url) for u in css_urls(css) if not u.startswith("data:"))

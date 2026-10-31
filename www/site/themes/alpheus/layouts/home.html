@@ -1,6 +1,6 @@
 {{ define "main" }}
 {{ $phase := index hugo.Data.phases site.Params.phase }}
-<h1>{{ site.Title }}</h1>
+<h1 class="logo">{{ partial "logo.html" (dict "motto" true "animated" true "width" 408 "alt" site.Title) }}</h1>
 <p class="lede">{{ .Description }}</p>
 <p class="phase"><strong>Status: {{ $phase.name }}.</strong> {{ $phase.short }} <a href="#status">What that means</a></p>
 

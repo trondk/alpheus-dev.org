@@ -103,7 +103,18 @@ header.site li, footer.site li { margin: 0; }
 header.site a, footer.site a { text-decoration: none; }
 header.site a:hover, footer.site a:hover { text-decoration: underline; }
 
-header.site { padding: 1.5rem 0 0; }
+header.site {
+  padding: 1.5rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.5rem;
+}
+header.site .home { align-self: center; }
+header.site .home img { display: block; width: 136px; height: auto; }
+/* The front page's heading is the logo with the motto. */
+h1.logo { margin: 2rem 0 1rem; line-height: 0; }
+h1.logo img { display: block; width: min(408px, 100%); height: auto; }
 
 h1, h2 {
   font-family: "Spectral", Georgia, serif;
