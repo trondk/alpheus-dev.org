@@ -58,12 +58,14 @@ type bench struct {
 	// Kills are the pods the test deleted during the run.
 	Kills []string `json:"kills,omitempty"`
 
-	// run, timings and store are the finished run, the sink's result and
-	// the storage it is in.
+	// run, timings, store and results are the finished run, the sink's
+	// result, the storage the run's streams are in, opened from the spec,
+	// and the storage the result is in, opened from status.results alone.
 	t       *testing.T
 	run     *v1alpha1.StreamRun
 	timings []timing
 	store   store.Store
+	results store.Store
 }
 
 type latency struct {
@@ -113,8 +115,11 @@ func (b *bench) finish(e *env, r *v1alpha1.StreamRun, want int, ports ...string)
 	if res.Step != "sink" || res.Output != chunk.DefaultOutput {
 		t.Errorf("result %+v, want sink's default output", res)
 	}
-	b.run, b.store = r, e.storeFor(res)
-	b.timings = parseTimings(t, resultChunks(t, b.store, res.Prefix))
+	b.run, b.results = r, e.storeFor(res)
+	if b.store == nil {
+		b.store = e.runStore(r)
+	}
+	b.timings = parseTimings(t, resultChunks(t, b.results, res.Prefix))
 
 	got := map[string]int{}
 	for _, tm := range b.timings {
@@ -184,7 +189,7 @@ func (b *bench) consumed(from ...string) map[string][]*chunk.Manifest {
 	t.Helper()
 	uid := string(b.run.UID)
 	res := b.run.Status.Results[0]
-	m := manifest(t, b.store, chunk.ResultStream(b.run.Name, uid, res.Step, res.Output, 0).ManifestKey())
+	m := manifest(t, b.results, chunk.ResultStream(b.run.Name, uid, res.Step, res.Output, 0).ManifestKey())
 	last := map[string][]*chunk.Manifest{}
 	ids := map[string]bool{}
 	for _, step := range from {

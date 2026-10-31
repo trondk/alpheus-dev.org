@@ -27,3 +27,5 @@ spec:
     bucket: alpheus-data
     region: garage
     secretRef: alpheus-s3
+    resultsBucket: alpheus-results
+    resultsSecretRef: alpheus-s3-results

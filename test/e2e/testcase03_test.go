@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"strings"
 	"testing"
 
 	"alpheus-dev.org/alpheus/sdk"
@@ -62,6 +63,23 @@ func TestTestcase03(t *testing.T) {
 	}
 	if m := out[0]; m.Last == nil || *m.Last != 0 {
 		t.Errorf("filter replica 0's manifest has last %v, want 0", m.Last)
+	}
+	// The result is in its own bucket, and status.results names a key
+	// that can read it, as GO-82 checks, but not write it (GO-129).
+	res := b.run.Status.Results[0]
+	if res.Bucket != "alpheus-results" || res.SecretRef != "alpheus-s3-results" {
+		t.Errorf("status.results names bucket %s and Secret %s, want alpheus-results and alpheus-s3-results", res.Bucket, res.SecretRef)
+	}
+	if err := b.results.Put(t.Context(), res.Prefix+"written-by-a-reader", strings.NewReader("x"), 1); err == nil {
+		t.Error("the results key could write")
+	}
+	for key, err := range b.store.List(t.Context(), "results/") {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(key, string(b.run.UID)) {
+			t.Errorf("%s is in the main bucket", key)
+		}
 	}
 	b.report()
 }

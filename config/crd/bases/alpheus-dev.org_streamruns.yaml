@@ -397,10 +397,27 @@ spec:
                       it.
                     maxLength: 63
                     type: string
+                  resultsBucket:
+                    description: |-
+                      ResultsBucket holds the results, results/<run>/<uid>/, instead of
+                      Bucket, so they can be read with a key that can only read them
+                      (GO-129).
+                    maxLength: 63
+                    minLength: 3
+                    pattern: ^[a-z0-9][a-z0-9.-]*[a-z0-9]$
+                    type: string
+                  resultsSecretRef:
+                    description: |-
+                      ResultsSecretRef names a Secret like SecretRef with a key that can
+                      read ResultsBucket. status.results names it instead of SecretRef,
+                      so readers of results do not get the agents' key.
+                    maxLength: 253
+                    type: string
                   secretRef:
                     description: |-
                       SecretRef names a Secret in the run's namespace with the keys
                       AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. Only agents get it.
+                      With ResultsBucket, it must be able to write both buckets.
                     maxLength: 253
                     minLength: 1
                     type: string
@@ -409,6 +426,9 @@ spec:
                 - endpoint
                 - secretRef
                 type: object
+                x-kubernetes-validations:
+                - message: resultsSecretRef needs resultsBucket
+                  rule: '!has(self.resultsSecretRef) || has(self.resultsBucket)'
               ttlAfterFinished:
                 description: |-
                   TTLAfterFinished is how long the run's pods and chunks are kept after

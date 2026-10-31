@@ -575,14 +575,24 @@ func (rc *Reconciler) store(ctx context.Context, r *v1alpha1.StreamRun) (store.S
 	if err := rc.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: r.Spec.Storage.SecretRef}, &secret); err != nil {
 		return nil, fmt.Errorf("storage secret: %w", err)
 	}
-	return store.NewS3(store.S3Config{
+	cfg := store.S3Config{
 		Endpoint:  r.Spec.Storage.Endpoint,
 		Bucket:    r.Spec.Storage.Bucket,
 		Region:    r.Spec.Storage.Region,
 		AccessKey: string(secret.Data["AWS_ACCESS_KEY_ID"]),
 		SecretKey: string(secret.Data["AWS_SECRET_ACCESS_KEY"]),
 		CAFile:    rc.Options.StorageCAFile,
-	})
+	}
+	main, err := store.NewS3(cfg)
+	if err != nil || r.Spec.Storage.ResultsBucket == "" {
+		return main, err
+	}
+	cfg.Bucket = r.Spec.Storage.ResultsBucket
+	results, err := store.NewS3(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return store.WithResults(main, results), nil
 }
 
 // ensureSignalSecret gives one attempt of a replica its client certificate

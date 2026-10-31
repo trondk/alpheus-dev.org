@@ -752,3 +752,30 @@ func TestSpecNotRewritten(t *testing.T) {
 		t.Errorf("resultsTTL = %q, want 168h", ttl)
 	}
 }
+
+// With a results bucket, the agents write results there, and
+// status.results names that bucket and the Secret that can only read it,
+// never the agents' key (GO-129).
+func TestResultsBucket(t *testing.T) {
+	ns := namespace(t)
+	r := testcase03(ns, 1)
+	r.Spec.Storage.ResultsBucket = "alpheus-results"
+	r.Spec.Storage.ResultsSecretRef = "results-reader"
+	create(t, r)
+	uid := string(get(t, r).UID)
+
+	p := waitPod(t, ns, "sales-sum-0-1")
+	if got := env(p.Spec.InitContainers[0], "ALPHEUS_S3_RESULTS_BUCKET"); got != "alpheus-results" {
+		t.Errorf("agent results bucket %q", got)
+	}
+	res := chunk.NewManifest("sales", uid, "sum.result", 0, 1)
+	res.Append(chunk.Chunk{N: 1, Ext: "txt", Bytes: 7, SHA256: strings.Repeat("0", 64)})
+	put(t, chunk.ResultStream("sales", uid, "sum", "result", 0).ManifestKey(), res)
+	eventually(t, "results status", func() string {
+		st := get(t, r).Status
+		if len(st.Results) != 1 || st.Results[0].Bucket != "alpheus-results" || st.Results[0].SecretRef != "results-reader" {
+			return fmt.Sprintf("%+v", st.Results)
+		}
+		return ""
+	})
+}

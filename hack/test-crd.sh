@@ -57,6 +57,10 @@ create "Unsupported value" "stomp signal driver, which was removed" \
   < <(sample '$a\  signals: {driver: stomp}')
 create "Unsupported value" "unknown signal driver" \
   < <(sample '$a\  signals: {driver: kafka}')
+create "resultsSecretRef needs resultsBucket" "results key without a results bucket" \
+  < <(sample 's/secretRef: alpheus-s3/secretRef: alpheus-s3, resultsSecretRef: reader/')
+create ok "results bucket with its own read key" \
+  < <(sample 's/secretRef: alpheus-s3/secretRef: alpheus-s3, resultsBucket: alpheus-results, resultsSecretRef: reader/')
 create "should be greater than or equal to 1" "maxUnacked 0" \
   < <(sample 's/maxUnacked: 4/maxUnacked: 0/')
 create ok "testcase03 sample is valid" < "$ROOT/config/samples/testcase03.yaml"

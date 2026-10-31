@@ -14,6 +14,8 @@ OUT="$HERE/_out"
 SERVICES="$HERE/services"
 REGISTRY_NAME="registry.alpheus.test"
 DATA_BUCKET="alpheus-data"
+RESULTS_BUCKET="alpheus-results"
+RESULTS_KEY="results-reader"
 REGISTRY_BUCKET="alpheus-registry"
 REGISTRY_KEY="zot-registry"
 
@@ -100,6 +102,13 @@ install_storage() {
     --from-literal=AWS_ACCESS_KEY_ID="$GARAGE_DEFAULT_ACCESS_KEY" \
     --from-literal=AWS_SECRET_ACCESS_KEY="$GARAGE_DEFAULT_SECRET_KEY" \
     --dry-run=client -o yaml)" alpheus-s3
+
+  # A bucket for results, which the agents' key writes and a key of its
+  # own can only read (GO-129). hack/e2e.sh reads that key from Garage.
+  garage bucket info "$RESULTS_BUCKET" >/dev/null || garage bucket create "$RESULTS_BUCKET" >/dev/null
+  garage bucket allow --read --write --key "$GARAGE_DEFAULT_ACCESS_KEY" "$RESULTS_BUCKET" >/dev/null
+  garage key info "$RESULTS_KEY" >/dev/null || garage key create "$RESULTS_KEY" >/dev/null
+  garage bucket allow --read --key "$RESULTS_KEY" "$RESULTS_BUCKET" >/dev/null
 }
 
 # Zot's bucket and key live in Garage. The key is read back from Garage on

@@ -207,7 +207,7 @@ en strøm med manifest, ligesom en kant, men under
 | GO-83 | SKAL | Stier i lageret bruger runnets UID, ikke kun dets navn: `runs/<uid>/` og `results/<run>/<uid>/`. Slettes en StreamRun og oprettes igen med samme navn, får den en ny UID, og gamle og nye data blandes aldrig. Navnet står med i `results/` og i manifestet (`run`), så en person kan finde resultatet. |
 | GO-78 | SKAL | Resultater slettes ikke af `ttlAfterFinished` eller finalizeren (GO-20). De slettes, når `spec.resultsTTL` er udløbet, regnet fra `finishedAt`. Standard er 7 dage. Værdien `0` betyder, at controlleren aldrig sletter dem, og skal angives eksplicit. |
 | GO-98 | SKAL | Agenten skriver `results/<run>/<uid>/run.json` med runnets navn, namespace, UID, `finishedAt` og `resultsTTL`, før den første resultat-chunk skrives. Så kan resultater findes og ryddes, også efter at StreamRun-objektet er slettet. |
-| GO-129 | SKAL | Resultater kan ligge i deres egen bucket: `spec.storage.resultsBucket` og `spec.storage.resultsSecretRef`. Agenterne skriver dem med `secretRef`, der skal kunne skrive begge buckets, og `status.results` peger på `resultsSecretRef`, en nøgle, der kun kan læse resultat-bucketen. Uden `resultsBucket` ligger resultater i `bucket`, og `status.results` peger på `secretRef`, der kan skrive hele bucketen; dokumentationen siger det tydeligt. Nøgler i S3-lagre som Garage gælder pr. bucket, ikke pr. prefix, så en egen bucket er den måde, læsere kan nøjes med læseadgang. |
+| GO-129 | SKAL | Resultater kan ligge i deres egen bucket: `spec.storage.resultsBucket` og `spec.storage.resultsSecretRef`. Agenterne skriver dem med `secretRef`, der skal kunne skrive begge buckets, og `status.results` peger på `resultsSecretRef`, en nøgle, der kun kan læse resultat-bucketen. Uden `resultsBucket` ligger resultater i `bucket`, og `status.results` peger på `secretRef`, der kan skrive hele bucketen; dokumentationen siger det tydeligt. Nøgler i S3-lagre som Garage gælder pr. bucket, ikke pr. prefix, så en egen bucket er den måde, læsere kan nøjes med læseadgang. Alt under `results/<run>/<uid>/` ligger i resultat-bucketen: resultaterne, `run.json`, resuméet og fejlloggen (`_errors/`); `runs/<uid>/` bliver i `bucket`. Agent og controller bruger ét lager, der sender nøgler efter prefix (`store.WithResults`), og agenten får bucketen i `ALPHEUS_S3_RESULTS_BUCKET`. `resultsSecretRef` kræver `resultsBucket` (CEL). |
 | GO-99 | BØR | `alpheus results gc` finder resultater, hvis TTL er udløbet, eller hvis StreamRun-objektet ikke længere findes, og sletter dem efter bekræftelse. Med `--dry-run` vises kun, hvad der ville blive slettet. |
 | GO-79 | SKAL | `status.results` har én post pr. resultat med S3-endpoint, bucket, region, prefix, navnet på Secret'en med nøglerne til at læse det og antal chunks, bytes og komponentens committede tællere (10.1). Det er det, der skal til for at hente resultatet, og `alpheus get` viser det. |
 
@@ -695,6 +695,11 @@ forventer kun de øvrige chunks.
   chunk, der skulle være droppet, kommer frem.
 - Replikaantallet ændres med `BENCH_FILTER_REPLICAS`, og `drop` og
   `skip` følger det, så replika 0 altid får præcis de droppede chunks.
+- Resultatet ligger i sin egen bucket, `alpheus-results` (GO-129).
+  `status.results` peger på Secret'en `alpheus-s3-results` med en nøgle,
+  der kun kan læse den. Testen henter resultatet med den (GO-82),
+  kontrollerer, at den ikke kan skrive, og at intet af runnets
+  resultater ligger i `alpheus-data`.
 
 | ID | Niveau | Krav |
 |---|---|---|
@@ -778,7 +783,7 @@ Bruges Alpheus uden Vagrant, sættes S3-lager og registry op manuelt.
 
 | Tjeneste | Adresse fra værten | Hvad `credentials.sh` viser |
 |---|---|---|
-| Garage S3 | `https://<VM IP>:30900`, region `garage`, bucket `alpheus-data` | access key, secret key |
+| Garage S3 | `https://<VM IP>:30900`, region `garage`, bucket `alpheus-data` og resultat-bucketen `alpheus-results` | access key, secret key, og nøglen `results-reader`, der kun kan læse `alpheus-results` (GO-129) |
 | Garage dashboard | `https://<VM IP>:30901` | admin token (bruges til login) |
 | Garage internt | | rpc secret |
 | Zot | `https://registry.alpheus.test:30500`, ingen login | Zots egen S3-nøgle til bucket `alpheus-registry` |
@@ -915,7 +920,9 @@ host-only/NAT-netværk og ikke kan nås udefra. Det står i
    stedet for fejlet. Pods slettes nu først, når fasen er skrevet, og en
    pod, der mangler i cachen, bekræftes slettet hos API-serveren, før den
    tæller som et fejlet forsøg (GO-67).
-9. CLI, Helm-chart og første udgivelse `v0.1.0`. Komponenter i andre
+9. CLI, Helm-chart og første udgivelse `v0.1.0`. Allerede bygget her:
+   egen bucket til resultater (GO-129) med en nøgle, der kun kan læse
+   dem; testcase03 bruger den. Komponenter i andre
    sprog end Go bruger gRPC-kontrakten (`proto/component.proto`) og den
    dokumenterede lokale mode; der er intet Python-SDK i `v0.1.0`. En
    Python-referencekomponent på ca. 200 linjer i `test/components/`

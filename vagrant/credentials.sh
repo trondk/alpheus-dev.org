@@ -49,6 +49,10 @@ from_env() {  # file key
 from_secret() {  # namespace secret key
   kubectl -n "$1" get secret "$2" -o jsonpath="{.data.$3}" 2>/dev/null | base64 -d 2>/dev/null
 }
+from_garage_key() {  # key field ("Key ID" or "Secret key")
+  kubectl -n storage exec deploy/garage -c garage -- /garage key info --show-secret "$1" 2>/dev/null |
+    sed -n -E "s/^$2:[[:space:]]+//p"
+}
 
 CLUSTER=1
 kubectl version --request-timeout=5s >/dev/null 2>&1 || CLUSTER=0
@@ -108,6 +112,10 @@ Garage (storage)                               from _out/secrets.env
                 the same key is the Secret alpheus-s3 in namespace default
                 (spec.storage.secretRef for test runs)
   rpc secret:   $(show "$(from_env "$GARAGE" GARAGE_RPC_SECRET)")   (Garage-internal)
+  results:      bucket alpheus-results, which the key above writes and a
+                key of its own, results-reader, can only read (GO-129):
+    access key: $(show "$(from_garage_key results-reader "Key ID")")
+    secret key: $(show "$(from_garage_key results-reader "Secret key")")
 
 Zot (registry)                                 Garage key from the cluster
   web UI:       https://$REGISTRY   no login (this machine only, README.md)

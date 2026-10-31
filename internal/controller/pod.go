@@ -130,6 +130,9 @@ func (rc *Reconciler) pod(r *v1alpha1.StreamRun, g *graph, s *v1alpha1.Step, rep
 		secretEnv("ALPHEUS_S3_ACCESS_KEY", r.Spec.Storage.SecretRef, "AWS_ACCESS_KEY_ID"),
 		secretEnv("ALPHEUS_S3_SECRET_KEY", r.Spec.Storage.SecretRef, "AWS_SECRET_ACCESS_KEY"),
 	}
+	if b := r.Spec.Storage.ResultsBucket; b != "" {
+		agentEnv = append(agentEnv, corev1.EnvVar{Name: "ALPHEUS_S3_RESULTS_BUCKET", Value: b})
+	}
 	volumes := []corev1.Volume{{
 		Name:         sharedVolume,
 		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: s.Scratch}},

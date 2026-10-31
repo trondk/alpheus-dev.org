@@ -52,7 +52,7 @@ $ ./destroy.sh              # removes the VM
 
 | Service | Purpose | From your machine |
 |---|---|---|
-| Garage | S3-compatible storage for chunks and results | `https://<VM IP>:30900` |
+| Garage | S3-compatible storage: chunks in `alpheus-data`, results in `alpheus-results` | `https://<VM IP>:30900` |
 | garage-ui | Garage's dashboard | `https://<VM IP>:30901` |
 | Zot | Container registry for the test images | `https://registry.alpheus.test:30500` |
 | HAProxy | HTTPS in front of the three | |
@@ -148,6 +148,11 @@ or `sink` would wait for it forever. The test checks from the
 acknowledgements in object storage that the ten replicas split the
 chunks between them without overlap, that replica 0's stream ended with
 no chunks, and that `sink` got exactly the other chunks.
+
+testcase03 also keeps its result in a bucket of its own. The run's
+status points readers to a key that can only read that bucket, not to
+the agents' key, which can write everything. The test fetches the result
+with that key and checks that it cannot write.
 
 `make bench` runs all three with the images from the last `make e2e`,
 and saves the measurements as JSON in `_out/bench/`. Change their sizes

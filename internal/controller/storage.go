@@ -179,6 +179,14 @@ func (rc *Reconciler) results(ctx context.Context, st store.Store, r *v1alpha1.S
 				Prefix:    prefix + output + "/",
 				SecretRef: r.Spec.Storage.SecretRef,
 			}
+			// A results bucket with its own read key: readers never get
+			// the agents' key (GO-129).
+			if b := r.Spec.Storage.ResultsBucket; b != "" {
+				res.Bucket = b
+				if ref := r.Spec.Storage.ResultsSecretRef; ref != "" {
+					res.SecretRef = ref
+				}
+			}
 			byOutput[output] = res
 			order = append(order, output)
 		}

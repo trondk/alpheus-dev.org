@@ -24,6 +24,8 @@ limitations under the License.
 //	BENCH_IMAGE                     the test component, pinned by digest
 //	ALPHEUS_E2E_S3_ACCESS_KEY,      the keys put in each run's Secret
 //	ALPHEUS_E2E_S3_SECRET_KEY
+//	ALPHEUS_E2E_S3_RESULTS_ACCESS_KEY, the key that can only read the
+//	ALPHEUS_E2E_S3_RESULTS_SECRET_KEY  bucket alpheus-results (testcase03)
 //	ALPHEUS_E2E_S3_ENDPOINT         where this machine reaches the storage,
 //	                                instead of the endpoint in status.results,
 //	                                which is only reachable in the cluster
@@ -137,6 +139,17 @@ func setup(t *testing.T) *env {
 		},
 	}
 	if err := c.Create(ctx, secret); err != nil {
+		t.Fatal(err)
+	}
+	// A key that can only read the results bucket (GO-129).
+	results := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "alpheus-s3-results", Namespace: e.ns},
+		StringData: map[string]string{
+			"AWS_ACCESS_KEY_ID":     need(t, "ALPHEUS_E2E_S3_RESULTS_ACCESS_KEY"),
+			"AWS_SECRET_ACCESS_KEY": need(t, "ALPHEUS_E2E_S3_RESULTS_SECRET_KEY"),
+		},
+	}
+	if err := c.Create(ctx, results); err != nil {
 		t.Fatal(err)
 	}
 	return e

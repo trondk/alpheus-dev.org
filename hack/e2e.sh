@@ -40,8 +40,17 @@ YAML
 kubectl apply --server-side -k "$OUT/deploy"
 kubectl -n alpheus-system rollout status deployment/alpheus-controller --timeout=180s
 
+# The key that can only read the results bucket, made by
+# vagrant/services.sh in Garage (GO-129).
+info=$(kubectl -n storage exec deploy/garage -c garage -- /garage key info --show-secret results-reader 2>/dev/null)
+RESULTS_ACCESS_KEY=$(sed -n -E 's/^Key ID:[[:space:]]+//p' <<<"$info")
+RESULTS_SECRET_KEY=$(sed -n -E 's/^Secret key:[[:space:]]+//p' <<<"$info")
+[[ -n $RESULTS_ACCESS_KEY && -n $RESULTS_SECRET_KEY ]] || { echo "no key results-reader in Garage: run vagrant/services.sh" >&2; exit 1; }
+
 cd "$ROOT"
 ALPHEUS_E2E=1 \
+ALPHEUS_E2E_S3_RESULTS_ACCESS_KEY="$RESULTS_ACCESS_KEY" \
+ALPHEUS_E2E_S3_RESULTS_SECRET_KEY="$RESULTS_SECRET_KEY" \
 ALPHEUS_E2E_S3_ACCESS_KEY="$GARAGE_DEFAULT_ACCESS_KEY" \
 ALPHEUS_E2E_S3_SECRET_KEY="$GARAGE_DEFAULT_SECRET_KEY" \
 ALPHEUS_E2E_S3_ENDPOINT="https://$("$VAGRANT/talos.sh" ip):30900" \

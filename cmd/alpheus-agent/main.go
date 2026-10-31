@@ -25,6 +25,7 @@ limitations under the License.
 //	ALPHEUS_S3_ACCESS_KEY
 //	ALPHEUS_S3_SECRET_KEY
 //	ALPHEUS_S3_CA_FILE     optional CA bundle for the endpoint
+//	ALPHEUS_S3_RESULTS_BUCKET  optional bucket for results/ (GO-129)
 //	ALPHEUS_SIGNAL_HUB     the builtin signal hub; empty means poll only
 //	ALPHEUS_SIGNAL_CA      the hub's CA, and this agent's certificate and
 //	ALPHEUS_SIGNAL_CERT    key, issued by the controller per run (GO-41)
@@ -73,16 +74,25 @@ func run(ctx context.Context, log *slog.Logger, exitOnFinish bool) error {
 	if err != nil {
 		return err
 	}
-	st, err := store.NewS3(store.S3Config{
+	s3 := store.S3Config{
 		Endpoint:  os.Getenv("ALPHEUS_S3_ENDPOINT"),
 		Bucket:    os.Getenv("ALPHEUS_S3_BUCKET"),
 		Region:    os.Getenv("ALPHEUS_S3_REGION"),
 		AccessKey: os.Getenv("ALPHEUS_S3_ACCESS_KEY"),
 		SecretKey: os.Getenv("ALPHEUS_S3_SECRET_KEY"),
 		CAFile:    os.Getenv("ALPHEUS_S3_CA_FILE"),
-	})
-	if err != nil {
+	}
+	var st store.Store
+	if st, err = store.NewS3(s3); err != nil {
 		return err
+	}
+	if b := os.Getenv("ALPHEUS_S3_RESULTS_BUCKET"); b != "" {
+		s3.Bucket = b
+		results, err := store.NewS3(s3)
+		if err != nil {
+			return err
+		}
+		st = store.WithResults(st, results)
 	}
 
 	var sig alsignal.Driver

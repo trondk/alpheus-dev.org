@@ -301,6 +301,8 @@ type ChunkPolicy struct {
 }
 
 // Storage is an S3-compatible object store.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.resultsSecretRef) || has(self.resultsBucket)",message="resultsSecretRef needs resultsBucket"
 type Storage struct {
 	// Endpoint is the URL of the S3 API.
 	//
@@ -326,11 +328,30 @@ type Storage struct {
 
 	// SecretRef names a Secret in the run's namespace with the keys
 	// AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. Only agents get it.
+	// With ResultsBucket, it must be able to write both buckets.
 	//
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	SecretRef string `json:"secretRef"`
+
+	// ResultsBucket holds the results, results/<run>/<uid>/, instead of
+	// Bucket, so they can be read with a key that can only read them
+	// (GO-129).
+	//
+	// +optional
+	// +kubebuilder:validation:MinLength=3
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9.-]*[a-z0-9]$`
+	ResultsBucket string `json:"resultsBucket,omitempty"`
+
+	// ResultsSecretRef names a Secret like SecretRef with a key that can
+	// read ResultsBucket. status.results names it instead of SecretRef,
+	// so readers of results do not get the agents' key.
+	//
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	ResultsSecretRef string `json:"resultsSecretRef,omitempty"`
 }
 
 // SignalDriver names a signal driver.
