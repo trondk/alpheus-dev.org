@@ -250,6 +250,33 @@ replicas each, and prints a table of the processing time and throughput
 with the node it ran on. `REPLICAS`, `ETL_FILES`, `ETL_ROWS` and
 `ETL_SPLIT_BYTES` change it.
 
+## When things fail
+
+testcase09 to testcase13 take away something a run depends on, and check
+that it either carries on with an exact result or stops with a reason
+that says what went wrong:
+
+- testcase09 scales Garage to 0 in the middle of a run, for 20 seconds and
+  for 3 minutes. The agents wait for it (`storage.timeout`, 10 minutes by
+  default), and the run succeeds with every chunk once, exact counters and
+  no restarts.
+- testcase10 deletes the controller's pod twice during testcase02's
+  fan-out and fan-in. The signal hub goes with it, and the agents poll the
+  manifests meanwhile. The run succeeds without restarts, and a thread
+  that reads the status four times a second checks that no counter falls
+  and nothing finished becomes unfinished.
+- testcase11 gives a run a key with the wrong secret. It fails within
+  seconds with "the storage refused the keys in Secret …", without
+  restarts, and deleting it does not hang although its data cannot be
+  deleted.
+- testcase12 writes to `alpheus-quota`, a bucket with a quota of 20 MiB.
+  The run fails with Garage's "Bucket size quota is reached", not as an
+  outage, and every chunk its manifest lists exists, matches its
+  checksum and is counted.
+- testcase13 gives `sink` 1 MiB of scratch for chunks of 4 MiB. Its agent
+  refuses the first chunk with an error that names the scratch folder,
+  before Kubernetes would evict the pod.
+
 ## Releases
 
 {{< repolink "hack/release.sh" >}} builds a release of the tagged commit
