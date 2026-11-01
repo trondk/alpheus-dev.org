@@ -1,0 +1,6 @@
+public/
+resources/
+.hugo_build.lock
+.lighthouseci/
+# Fetched from the main repository by ci/fetch-docs.sh (WWW-22).
+/content/docs/
