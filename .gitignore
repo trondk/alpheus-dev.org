@@ -4,3 +4,4 @@ resources/
 .lighthouseci/
 # Fetched from the main repository by ci/fetch-docs.sh (WWW-22).
 /content/docs/
+__pycache__/
