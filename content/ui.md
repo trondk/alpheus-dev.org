@@ -19,7 +19,10 @@ alpheus ui on http://127.0.0.1:7171/ (namespace flows); Ctrl-C stops it
 This is the sketch it is built from: the runs, one run with its flow,
 replicas and events, and one replica with its counts, error log, logs and
 failed attempts, with a button that replays an attempt on its own.
-[When a run fails](/docs/debugging/#alpheus-ui) describes what it shows
-and how it keeps your cluster safe.
+A team can also run the same page in the cluster, from the Helm chart
+with `ui.enabled`: it then shows the runs of every namespace, and its
+replay button runs the failed attempt as a pod next to the run.
+[When a run fails](/docs/debugging/#alpheus-ui) describes what it shows,
+how it runs in the cluster, and how it keeps your cluster safe.
 
 {{< sketch "ui" >}}

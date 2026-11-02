@@ -254,7 +254,7 @@ with the node it ran on. `REPLICAS`, `ETL_FILES`, `ETL_ROWS` and
 
 ## When things fail
 
-testcase09 to testcase14 take away something a run depends on, or break
+testcase09 to testcase15 take away something a run depends on, or break
 a component, and check that the run either carries on with an exact
 result or stops with a reason that says what went wrong:
 
@@ -285,6 +285,13 @@ result or stops with a reason that says what went wrong:
   failed on. `alpheus replay` fetches it, and the component fails on it
   again on this machine, with debug lines in its log. Meanwhile the test
   reads an agent's metrics through the API server.
+
+- testcase15 looks at the same failure through `alpheus ui` in the
+  cluster, which the end-to-end tests install with the chart, reached with
+  `kubectl port-forward`. The page shows the run among the runs of every
+  namespace, the replica's kept log, and its replay button runs the last
+  attempt as a pod next to the run, which fails the same way at debug
+  level and is deleted afterwards.
 
 testcase11 to testcase14 also check the reason code each failure gets.
 See [When a run fails](/docs/debugging/).
