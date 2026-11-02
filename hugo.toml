@@ -29,6 +29,14 @@ enableRobotsTXT = true
 
 [menus]
   [[menus.main]]
+    name = "Idea"
+    url = "/idea/"
+    weight = 5
+  [[menus.main]]
+    name = "UI"
+    url = "/ui/"
+    weight = 7
+  [[menus.main]]
     name = "Docs"
     url = "/docs/"
     weight = 10

@@ -254,9 +254,9 @@ with the node it ran on. `REPLICAS`, `ETL_FILES`, `ETL_ROWS` and
 
 ## When things fail
 
-testcase09 to testcase13 take away something a run depends on, and check
-that it either carries on with an exact result or stops with a reason
-that says what went wrong:
+testcase09 to testcase14 take away something a run depends on, or break
+a component, and check that the run either carries on with an exact
+result or stops with a reason that says what went wrong:
 
 - testcase09 scales Garage to 0 in the middle of a run, for 20 seconds and
   for 3 minutes. The agents wait for it (`storage.timeout`, 10 minutes by
@@ -278,6 +278,16 @@ that says what went wrong:
 - testcase13 gives `sink` 1 MiB of scratch for chunks of 4 MiB. Its agent
   refuses the first chunk with an error that names the scratch folder,
   before Kubernetes would evict the pod.
+- testcase14 runs a component with a bug: `pass` fails on one chunk, in
+  every attempt. The run fails with the reason `ComponentFailed` and the
+  component's own words, the events tell the story, both attempts' logs
+  are kept in the bucket, and the last attempt is kept with the chunk it
+  failed on. `alpheus replay` fetches it, and the component fails on it
+  again on this machine, with debug lines in its log. Meanwhile the test
+  reads an agent's metrics through the API server.
+
+testcase11 to testcase14 also check the reason code each failure gets.
+See [When a run fails](/docs/debugging/).
 
 ## Releases
 

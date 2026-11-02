@@ -293,3 +293,15 @@ footer.site {
   color: var(--sediment);
   font-size: 0.95rem;
 }
+
+/* The idea page's pencil sketch: a sheet of paper in both themes, with
+   the site's body font. */
+.sketch { margin: 1.5rem 0 2rem; }
+.sketch svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  border-radius: 4px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
+}

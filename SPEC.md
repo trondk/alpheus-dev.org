@@ -39,6 +39,8 @@ saglig, konkret og uden salgssprog.
 
 ```
 /                         Forside
+/idea/                    Idéen i kort form, med en blyantsskitse: problemet, målet, hvad Alpheus ikke er, hvornår det er færdigt, og skitsen af UI'et (findes)
+/ui/                      alpheus ui: hvordan den ser ud, som blyantsskitse (findes)
 /docs/                    Dokumentation (pr. version)
   compare/                Sammenligning med Argo, Pachyderm, Numaflow og diskless Kafka, og hvornår man skal vælge dem (findes; samme tekst som i README)
   getting-started/        Installation og første flow (findes: fra kilden på testklyngen)
@@ -47,6 +49,7 @@ saglig, konkret og uden salgssprog.
   cli/                    CLI-reference, genereret fra CLI'ens egen hjælp med make generate (findes)
   components/             Skriv en komponent i Go eller Python: et run trin for trin, skabeloner og eksempler (findes)
   etl/                    Flagskibet, ETL af store filer on-prem: gennemgang og målinger (findes)
+  debugging/              Når et run fejler: årsagskoder, events, gemte logs, genkørsel, alpheus ui og metrics (findes)
   verify/                 Kontrollér en udgivelse med projektets nøgle (findes)
   operations/             Drift på Kubernetes og Talos, metrics, sikkerhed
   protocol/               Chunk-protokollen i detaljer
@@ -64,6 +67,8 @@ saglig, konkret og uden salgssprog.
 | WWW-4 | SKAL | CRD- og CLI-referencen genereres ved hvert byg fra det samme tag (eller `main`) som den dokumentationsversion, de hører til, så de aldrig kommer ud af trit med programmet. |
 | WWW-5 | SKAL | Hver dokumentationsside har et "Edit this page"-link til kilden i det primære repo på Forgejo, ikke i spejlet. |
 | WWW-6 | BØR | Søgning i dokumentationen kører helt i browseren (fx Pagefind), uden en ekstern søgetjeneste. |
+| WWW-50 | SKAL | `/idea/` holder projektet på kurs: en kort beskrivelse af problemet, målet, hvad Alpheus ikke er, og hvornår det er færdigt, og en blyantsskitse af idéen. Skitsen laves af `sketch/idea.py` til `assets/idea-sketch.svg` og vises inline med `role="img"`, titel og beskrivelse, så teksten står i sidens egen skrift; teksten under den siger det samme. Den er et ark papir i begge temaer. "Idea" står først i topmenuen. |
+| WWW-51 | SKAL | `/ui/` viser, hvordan `alpheus ui` ser ud, som en blyantsskitse lavet af `sketch/ui.py` til `assets/ui-sketch.svg`, med shortcoden `sketch` og samme krav som skitsen i WWW-50. Skitsen står også på `/idea/`. "UI" står i topmenuen efter "Idea". Begge skitser tegnes med `sketch/pencil.py`. |
 
 Status 2026-10-31: før første udgivelse ligger dokumentationen direkte under `/docs/` med en tydelig markering af, at den beskriver koden på `main`. Versionering efter WWW-3 (`/docs/v0.1/`, `/docs/dev/`) kommer med `v0.1.0`. `/docs/` viser en liste over siderne (temaets `section.html`).
 

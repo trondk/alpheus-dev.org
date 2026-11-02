@@ -1,0 +1,6 @@
+{{- /* A pencil sketch on paper, inline so its text is in the site's font:
+       {{< sketch "ui" >}} shows assets/ui-sketch.svg, made by
+       sketch/ui.py. */ -}}
+<figure class="sketch">
+  {{ (resources.Get (printf "%s-sketch.svg" (.Get 0))).Content | safeHTML }}
+</figure>
