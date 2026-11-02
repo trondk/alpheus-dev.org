@@ -86,6 +86,8 @@ With the cluster running:
 | `make bench-etl` | Runs the flagship ETL flow with 1, 2, 4 and 8 replicas of export, split and clean, and prints a table of the results |
 | `make release` | Builds, pushes and signs a release of the tagged commit; see [Releases](#releases) |
 | `make verify-release VERSION=vX.Y.Z` | Checks a release's signatures, checksums and SBOMs with its public key |
+| `make vulndb` | Downloads a copy of the Go vulnerability database into `_out/vulndb`; `VULNDB_URL` points it at a mirror |
+| `make vuln` | Runs `govulncheck` against that copy, without the network, and fails on known vulnerabilities in code Alpheus calls |
 
 ## End-to-end tests
 
@@ -292,7 +294,10 @@ public key, the way [Verify a release](/docs/verify/) describes.
 It needs podman, skopeo, [Helm](https://helm.sh/docs/intro/install/),
 [syft](https://github.com/anchore/syft) and
 [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
-version 3. cosign and syft run behind a proxy that does not exist, with
+version 3, and a copy of the Go vulnerability database from `make vulndb`
+no more than a week old. Before it builds anything, it runs `govulncheck`
+against that copy and stops if Alpheus calls code with a known
+vulnerability. cosign, syft and govulncheck run behind a proxy that does not exist, with
 only the registry let through, so a release fails instead of quietly
 calling Sigstore's public services or checking for updates. Signatures
 use the key alone, with no transparency log.
@@ -304,6 +309,8 @@ use the key alone, with no transparency log.
 | `PUSH_REGISTRY` | `REGISTRY` | Where images are pushed from the machine running the script |
 | `CA_FILE` | none | The CA of the registry's certificate, if it is not a public one |
 | `COSIGN_KEY`, `COSIGN_PUB` | `cosign.key`, `cosign.pub` | The key pair; `COSIGN_PASSWORD` unlocks the private key |
+| `VULNDB` | `_out/vulndb` | The copy of the Go vulnerability database |
+| `VULNDB_MAX_AGE` | `7` | How many days old that copy may be |
 | `ALLOW_DIRTY` | none | `1` builds from uncommitted changes and without the tag, for testing |
 
 The build is reproducible: binaries, archives, SBOMs, the chart and the
@@ -312,6 +319,7 @@ the same result. To try it on the test cluster, with a key made by
 `cosign generate-key-pair`:
 
 ```console
+$ make vulndb
 $ IP=$(vagrant/talos.sh ip)
 $ VERSION=v0.0.0-test.1 ALLOW_DIRTY=1 \
     REGISTRY=registry.alpheus.test:30500 PUSH_REGISTRY=$IP:30500 \
