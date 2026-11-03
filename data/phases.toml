@@ -3,7 +3,7 @@
 [design]
   name = "design phase"
   short = "Early code runs on a test cluster, but nothing is released yet."
-  long = "The API, the chunk format, the component SDK, the agent, the controller, the CLI and the Helm chart exist as code, and fifteen test flows run end to end on a test cluster, including restarts, pods killed at random, storage that goes down and a controller that dies, but no images are published. Do not plan production use. The next phases are alpha, beta and stable, and this page will say which one applies."
+  long = "The API, the chunk format, the component SDK, the agent, the controller, the CLI and the Helm chart exist as code, and seventeen test flows run end to end on a test cluster, including restarts, pods killed at random, storage that goes down, a controller that dies and a node that is lost, but no images are published. Do not plan production use. The next phases are alpha, beta and stable, and this page will say which one applies."
 
 [alpha]
   name = "alpha"

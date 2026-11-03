@@ -40,9 +40,9 @@ from envtest, which `make test` downloads the first time.
 
 ## The test cluster
 
-{{< repolink "vagrant/" >}} sets up a single-node Kubernetes cluster on
-Talos Linux in a local VM, with the services the end-to-end tests
-need. It uses Vagrant with the libvirt provider, so you need libvirt
+{{< repolink "vagrant/" >}} sets up a two-node Kubernetes cluster on
+Talos Linux in two local VMs, a control plane that also runs workloads
+and a worker, with the services the end-to-end tests need. It uses Vagrant with the libvirt provider, so you need libvirt
 and KVM, the vagrant-libvirt plugin, `talosctl`, `kubectl` and, for the
 end-to-end tests, `helm` and `podman`.
 
@@ -127,7 +127,7 @@ chunk fails the run. Then it reports:
 | Throughput | Bytes divided by the stream's duration |
 | Latency | Per chunk, from written to received: median, 95th percentile and maximum |
 
-On the single-node test cluster, with the images already pulled, startup
+On the earlier single-node test cluster, with the images already pulled, startup
 takes about a second and data moves at about 40 MB/s through the two
 hops.
 
@@ -254,7 +254,7 @@ with the node it ran on. `REPLICAS`, `ETL_FILES`, `ETL_ROWS` and
 
 ## When things fail
 
-testcase09 to testcase15 take away something a run depends on, or break
+testcase09 to testcase17 take away something a run depends on, or break
 a component, and check that the run either carries on with an exact
 result or stops with a reason that says what went wrong:
 
@@ -292,6 +292,16 @@ result or stops with a reason that says what went wrong:
   namespace, the replica's kept log, and its replay button runs the last
   attempt as a pod next to the run, which fails the same way at debug
   level and is deleted afterwards.
+
+- testcase16 runs a flow across the test cluster's two nodes: `source`
+  and `sink` on the control plane, `pass` with two replicas on the worker,
+  so every chunk crosses the network twice. It must succeed with exact
+  counts, and each pod must run where its step asked (`nodeSelector`).
+- testcase17 loses the worker in the middle of a run: the test powers its
+  VM off and deletes its Node, as a cloud provider does with a dead
+  machine. `pass`, which prefers the worker, starts again on the control
+  plane from its last committed chunk, and the run succeeds with every
+  chunk once. Then the test powers the worker on again.
 
 testcase11 to testcase14 also check the reason code each failure gets.
 See [When a run fails](/docs/debugging/).
