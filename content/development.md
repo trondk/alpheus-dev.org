@@ -306,6 +306,20 @@ result or stops with a reason that says what went wrong:
 testcase11 to testcase14 also check the reason code each failure gets.
 See [When a run fails](/docs/debugging/).
 
+## Upgrades
+
+`make test-upgrade` ({{< repolink "hack/test-upgrade.sh" >}}) builds the
+images of an older commit, the latest release tag or the commit before
+this one while there is none, and installs that commit's chart with them.
+testcase18 then starts a run with the older commit's test component, as a
+user's components are not rebuilt when Alpheus is upgraded, and upgrades
+to this commit's chart, CRD, controller and agent while the run is going.
+Afterwards a `pass` replica and the stateful `sink` are deleted, so their
+new attempts run the new agent next to the old component and pick up what
+the old agent committed. The run must succeed with every chunk once,
+exact counts and a status that never goes backwards. The cluster is left
+with this commit's chart, also when the test fails.
+
 ## Releases
 
 {{< repolink "hack/release.sh" >}} builds a release of the tagged commit
