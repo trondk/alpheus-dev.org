@@ -324,8 +324,5 @@ sender serveren CSP'en som header, selv om den også står i hver side.
 - Hvad bliver adressen på Forgejo-instansen?
 - Hvilken webserver kører siden (fx Caddy eller nginx), og hvem driver
   serveren?
-- Hvor skal sårbarheder rapporteres, når GitHubs private
-  sårbarhedsrapportering ikke kan bruges på et spejl? Fx en
-  e-mailadresse som `security@alpheus-dev.org`.
 - Hvem godkender indhold på siden: kun maintainers, eller også
   Redpill Linpro, hvis firmaet står bag?
