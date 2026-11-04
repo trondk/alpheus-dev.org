@@ -299,8 +299,8 @@ result or stops with a reason that says what went wrong:
   deleted.
 - testcase12 writes to `alpheus-quota`, a bucket with a quota of 20 MiB.
   The run fails with Garage's "Bucket size quota is reached", not as an
-  outage, and every chunk its manifest lists exists, matches its
-  checksum and is counted.
+  outage, at the first failed attempt and without restarts, and every
+  chunk its manifest lists exists, matches its checksum and is counted.
 - testcase13 gives `sink` 1 MiB of scratch for chunks of 4 MiB. Its agent
   refuses the first chunk with an error that names the scratch folder,
   before Kubernetes would evict the pod.
