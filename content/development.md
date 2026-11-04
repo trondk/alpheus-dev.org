@@ -51,7 +51,8 @@ $ cd vagrant
 $ ./deploy.sh               # about 5 minutes the first time
 $ ./credentials.sh          # keys, addresses and kubectl get nodes
 $ source ./credentials.sh   # sets KUBECONFIG and TALOSCONFIG
-$ ./destroy.sh              # removes the VM
+$ ./destroy.sh              # removes the VMs
+$ ./destroy.sh --clean      # and the earlier test reports, benchmarks and logs
 ```
 
 | Service | Purpose | From your machine |
@@ -201,6 +202,10 @@ plane, next to the earlier ones. The report has the result, the storage,
 the commit, the images and the nodes at the top, and each testcase with
 what it does, taken from its doc comment, and its own output. Failed
 testcases are open.
+
+The reports are saved on the machine that ran the tests, in `_out/reports/`,
+and each run serves all of them, so they outlive a rebuilt cluster.
+`vagrant/destroy.sh --clean` removes them with the cluster.
 
 ## Restarts, backpressure and chaos
 
