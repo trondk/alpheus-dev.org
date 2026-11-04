@@ -1,7 +1,7 @@
 ---
 title: Development and testing
 description: How Alpheus is built and tested, and the local Kubernetes cluster the end-to-end tests run on.
-lastmod: 2026-11-01
+lastmod: 2026-11-04
 ---
 
 Everything here runs on one Linux machine. Nothing needs a cloud
@@ -175,6 +175,32 @@ with `BENCH_CHUNKS`, `BENCH_SIZE` (bytes per chunk) and
 ```console
 $ BENCH_CHUNKS=256 BENCH_PASS_REPLICAS=4 make bench
 ```
+
+### Against MinIO
+
+`make e2e-minio` ({{< repolink "hack/e2e-minio.sh" >}}) runs the same
+testcases against MinIO instead of Garage. It installs MinIO in the test
+cluster for that run only, with the same buckets as Garage and new keys,
+points every flow's storage at it, and deletes it with its data and keys
+afterwards, also when a test fails. MinIO no longer publishes its own
+images, so this is Chainguard's build of MinIO's source, pinned by digest.
+
+In the first run against MinIO, every testcase but testcase12 passed
+unchanged. testcase12 fills a bucket with a quota of 20 MiB. Garage refuses
+the first write over the quota, so the run stops after 4 chunks. MinIO
+counts a bucket's usage now and then, and let 256 MiB in before it refused
+a write. Alpheus failed the run with the reason `StorageFull` on both, with
+everything it had committed intact, so testcase12 now checks that on MinIO
+without expecting the run to stop at a particular chunk.
+
+### Test reports
+
+When the tests are done, {{< repolink "hack/report.sh" >}} makes a report
+of the run and serves it in the test cluster, on port 30718 of the control
+plane, next to the earlier ones. The report has the result, the storage,
+the commit, the images and the nodes at the top, and each testcase with
+what it does, taken from its doc comment, and its own output. Failed
+testcases are open.
 
 ## Restarts, backpressure and chaos
 
