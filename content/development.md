@@ -332,8 +332,10 @@ result or stops with a reason that says what went wrong:
   `failurePolicy: continue`. The replica that gets the bad chunk gives up
   after one restart, and the other goes on. The run ends
   `PartiallySucceeded`, and every chunk is either in the result once or
-  counted as not processed: in a run of 64 chunks, 34 and 30. The bad
-  chunk is kept for a replay. See [Bad records and bad chunks](/docs/dead-letters/).
+  counted as not processed: in a run of 64 chunks, 34 and 30. When the
+  run has finished, all 30 are kept in the bucket, the bad chunk first,
+  and `alpheus replay --skipped` fetches them. See
+  [Bad records and bad chunks](/docs/dead-letters/).
 
 testcase11 to testcase14 also check the reason code each failure gets.
 See [When a run fails](/docs/debugging/).
