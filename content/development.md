@@ -280,7 +280,7 @@ with the node it ran on. `REPLICAS`, `ETL_FILES`, `ETL_ROWS` and
 
 ## When things fail
 
-testcase09 to testcase17 take away something a run depends on, or break
+testcase09 to testcase17 and testcase19 take away something a run depends on, or break
 a component, and check that the run either carries on with an exact
 result or stops with a reason that says what went wrong:
 
@@ -328,6 +328,12 @@ result or stops with a reason that says what went wrong:
   machine. `pass`, which prefers the worker, starts again on the control
   plane from its last committed chunk, and the run succeeds with every
   chunk once. Then the test powers the worker on again.
+- testcase19 runs testcase14's component with a bug in two replicas with
+  `failurePolicy: continue`. The replica that gets the bad chunk gives up
+  after one restart, and the other goes on. The run ends
+  `PartiallySucceeded`, and every chunk is either in the result once or
+  counted as not processed: in a run of 64 chunks, 34 and 30. The bad
+  chunk is kept for a replay. See [Bad records and bad chunks](/docs/dead-letters/).
 
 testcase11 to testcase14 also check the reason code each failure gets.
 See [When a run fails](/docs/debugging/).
