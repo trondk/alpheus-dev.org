@@ -1,0 +1,115 @@
+{{- /* The debug example's flow at one step of the session
+       (/docs/debug-example/): {{< debug-flow "failed" >}}. The steps are
+       run, failed, logs, replay-v1, replay-v2, replay-cluster and rerun.
+       The flow is drawn the same each time, so only what changes moves. */ -}}
+{{- $s := .Get 0 -}}
+{{- $texts := dict
+  "run" (slice "The flow starts" "Orders, customers, filter in three replicas, merge and sort all run at once; chunks flow between them through object storage. customers goes to merge as a side input.")
+  "failed" (slice "merge fails" "merge fails in all three attempts with the same panic at merge/main.go line 119. filter goes on until its streams are full, and sort waits. The run ends Failed.")
+  "logs" (slice "The kept logs" "The pods are gone, but the end of each attempt's log is kept in object storage under _logs, and alpheus logs --kept shows it on your machine.")
+  "replay-v1" (slice "A replay of the failed attempt" "alpheus replay fetches the failed attempt's inputs from _failures in object storage, twelve chunks of orders and all of customers, the side input, and runs merge version 1 on them in podman on your machine, at debug level. It fails the same way, and the debug log shows twenty customers with a blank region.")
+  "replay-v2" (slice "The fix, tried on the same inputs" "The same inputs, with merge version 2. It succeeds, writes None for the blank regions, and warns about each with the code blank_region.")
+  "replay-cluster" (slice "The fix, tried in the cluster" "The same replay as a pod in the cluster, so the data stays there: the agent's image fetches the inputs, merge version 2 runs on them, and its log comes to your terminal.")
+  "rerun" (slice "The flow again, with the fix" "A new run with merge version 2 and its log level at debug. Every step succeeds; merge joins every order and warns about 1,014 of them, and sort writes the report.")
+-}}
+{{- $t := index $texts $s -}}
+{{- $failed := in (slice "failed" "logs" "replay-v1" "replay-v2" "replay-cluster") $s -}}
+{{- $laptop := in (slice "logs" "replay-v1" "replay-v2" "replay-cluster") $s -}}
+{{- $done := eq $s "rerun" -}}
+{{- $id := printf "debug-flow-%s" $s -}}
+{{- $h := cond $laptop 300 216 -}}
+<figure class="k8s">
+  <svg viewBox="0 0 440 {{ $h }}" role="img" aria-labelledby="{{ $id }}-title {{ $id }}-desc">
+    <title id="{{ $id }}-title">{{ index $t 0 }}</title>
+    <desc id="{{ $id }}-desc">{{ index $t 1 }}</desc>
+
+    <rect class="frame" x="4" y="4" width="432" height="152" rx="10"/>
+    <text class="note start" x="14" y="22">the cluster</text>
+
+    <rect class="{{ if $done }}ok{{ else }}box{{ end }}" x="16" y="40" width="68" height="36" rx="4"/>
+    <text class="label" x="50" y="63">orders</text>
+
+    <rect class="box" x="116" y="34" width="72" height="36" rx="4"/>
+    <rect class="box" x="112" y="38" width="72" height="36" rx="4"/>
+    <rect class="{{ if $done }}ok{{ else }}box{{ end }}" x="108" y="42" width="72" height="36" rx="4"/>
+    <text class="label" x="144" y="65">filter ×3</text>
+
+    <rect class="{{ if $done }}ok{{ else }}box{{ end }}" x="108" y="104" width="80" height="36" rx="4"/>
+    <text class="label" x="148" y="127">customers</text>
+
+    <rect class="{{ if $failed }}fail{{ else if $done }}ok{{ else }}box{{ end }}" x="220" y="40" width="72" height="36" rx="4"/>
+    <text class="label strong" x="256" y="63">merge</text>
+
+    <g{{ if $failed }} class="faded"{{ end }}>
+      <rect class="{{ if $done }}ok{{ else }}box{{ end }}" x="324" y="40" width="68" height="36" rx="4"/>
+      <text class="label" x="358" y="63">sort</text>
+    </g>
+
+    <path class="data" d="M84 58 H104 M180 60 H216 M292 58 H320"/>
+    <path class="head-data" d="M102 53 L109 58 L102 63 Z M214 55 L221 60 L214 65 Z M318 53 L325 58 L318 63 Z"/>
+    <path class="sig" d="M188 122 H256 V82"/>
+    <path class="head-ctl" d="M251 84 L256 76 L261 84 Z"/>
+    <text class="note start" x="262" y="118">side input</text>
+
+    {{- if eq $s "run" }}
+    <text class="note" x="220" y="32">every step runs at once</text>
+    {{- else if $failed }}
+    <text class="label alarm" x="256" y="32">✗ 3 attempts</text>
+    <text class="note" x="358" y="32">waits</text>
+    {{- else if $done }}
+    <text class="label good" x="256" y="32">✓ 1,014 warnings</text>
+    <text class="label good" x="358" y="32">✓</text>
+    {{- end }}
+
+    <rect class="ground" x="0" y="160" width="440" height="52"/>
+    <line class="horizon" x1="0" y1="160" x2="440" y2="160"/>
+    <path class="data" d="M372 76 V160"/>
+    {{- if eq $s "logs" }}
+    <text class="label mono" x="220" y="184">_logs/merge/0/attempt-1 … 3</text>
+    <text class="note" x="220" y="202">object storage (S3): the end of each attempt's log</text>
+    {{- else if $laptop }}
+    <text class="label mono" x="220" y="184">_failures/merge/0/attempt-3/input/</text>
+    <text class="note" x="220" y="202">object storage (S3): 12 chunks of orders and customers</text>
+    {{- else if $done }}
+    <text class="label mono" x="372" y="184">report</text>
+    <text class="note" x="160" y="194">object storage (S3)</text>
+    <text class="note end" x="432" y="204">215 MiB, 7 chunks</text>
+    {{- else }}
+    <text class="note" x="220" y="192">object storage (S3): chunks, manifests and acks</text>
+    {{- end }}
+
+    {{- if eq $s "replay-cluster" }}
+    <rect class="ok" x="16" y="104" width="80" height="44" rx="4"/>
+    <text class="label" x="56" y="122">replay pod</text>
+    <text class="note" x="56" y="139">merge v2 ✓</text>
+    <path class="ctl" d="M56 148 V160"/>
+    <path class="sig" d="M30 148 V244 H120"/>
+    <path class="head-ctl" d="M112 239 L120 244 L112 249 Z"/>
+    <text class="note start" x="36" y="236">its log</text>
+    {{- end }}
+
+    {{- if $laptop }}
+    <rect class="frame" x="120" y="222" width="200" height="72" rx="8"/>
+    <text class="note start" x="130" y="238">your machine</text>
+    {{- if eq $s "logs" }}
+    <text class="label mono" x="220" y="262">alpheus logs --kept</text>
+    <text class="note alarm" x="220" y="282">panic at merge/main.go:119</text>
+    <path class="ctl" d="M220 212 V222"/>
+    {{- else if eq $s "replay-v1" }}
+    <rect class="fail" x="160" y="246" width="120" height="40" rx="4"/>
+    <text class="label" x="220" y="263">merge v1, debug</text>
+    <text class="note alarm" x="220" y="280">✗ the same panic</text>
+    <path class="data" d="M220 212 V244"/>
+    {{- else if eq $s "replay-v2" }}
+    <rect class="ok" x="160" y="246" width="120" height="40" rx="4"/>
+    <text class="label" x="220" y="263">merge v2</text>
+    <text class="note good" x="220" y="280">✓ None, 868 warnings</text>
+    <path class="data" d="M220 212 V244"/>
+    {{- else if eq $s "replay-cluster" }}
+    <text class="label mono" x="220" y="262">alpheus replay</text>
+    <text class="label mono" x="220" y="280">--with cluster</text>
+    {{- end }}
+    {{- end }}
+  </svg>
+  <figcaption>{{ index $t 0 }}</figcaption>
+</figure>

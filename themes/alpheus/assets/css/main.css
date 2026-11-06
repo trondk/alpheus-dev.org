@@ -34,6 +34,7 @@
   --sediment: #5B615A;
   --horizon: #80857D;
   --surface: #E4E7E4;
+  --alarm: #A3352A;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -43,6 +44,7 @@
     --spring: #5FC2BD;
     --sediment: #9AA19A;
     --surface: #1A1F22;
+    --alarm: #F09A8A;
   }
 }
 
@@ -222,6 +224,15 @@ li + li { margin-top: 0.5rem; }
 .k8s .under { stroke: var(--groundwater); stroke-width: 3; stroke-dasharray: 8 7; stroke-linecap: round; }
 .k8s .head-ctl { fill: var(--sediment); }
 .k8s .head-data { fill: var(--spring); }
+/* The debug example: what failed, and what the fix made work. */
+.k8s .fail { fill: var(--surface); stroke: var(--alarm); stroke-width: 2.5; }
+.k8s .ok { fill: var(--surface); stroke: var(--spring); stroke-width: 2.5; }
+.k8s .alarm { fill: var(--alarm); }
+.k8s .good { fill: var(--spring); }
+.k8s .faded { opacity: 0.45; }
+.shot { margin: 1.5rem 0 2rem; }
+.shot img { display: block; width: 100%; height: auto; border: 1px solid var(--horizon); border-radius: 4px; }
+.shot figcaption { margin-top: 0.75rem; color: var(--sediment); }
 .k8s figcaption { margin-top: 0.75rem; color: var(--sediment); }
 /* The drawing scales down on phones; the boxes have room for larger text. */
 @media (max-width: 40rem) {

@@ -68,11 +68,17 @@ if [[ -f $src/docs/_index.md ]]; then
     done
   ) &
   watcher=$!
-  trap 'kill $watcher 2>/dev/null' EXIT
 else
   log "no checkout at $src; cloning the docs"
   ci/fetch-docs.sh
 fi
 
 log "serving on http://localhost:$PORT/ (Ctrl+C stops it)"
-"$HUGO_BIN" server --bind 127.0.0.1 --port "$PORT" --disableFastRender
+# Hugo runs in the background, so a TERM to this script, not only Ctrl+C,
+# stops it and the watcher too, instead of leaving them on the port.
+"$HUGO_BIN" server --bind 127.0.0.1 --port "$PORT" --disableFastRender &
+server=$!
+trap 'kill $server ${watcher:-} 2>/dev/null; wait $server 2>/dev/null' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+wait $server

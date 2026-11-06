@@ -1,7 +1,7 @@
 ---
 title: Development and testing
 description: How Alpheus is built and tested, and the local Kubernetes cluster the end-to-end tests run on.
-lastmod: 2026-11-04
+lastmod: 2026-11-06
 ---
 
 Everything here runs on one Linux machine. Nothing needs a cloud
@@ -351,6 +351,14 @@ the storage and the signal hub are let through. Then the test adds a
 policy of its own that lets the source reach the registry, and a second
 run must reach it and still not the other two. See
 [What a run can reach](/docs/isolation/).
+
+testcase21 is the [debug example](/docs/debug-example/): a join of a web
+shop's orders and customers, about 150 MiB. Version 1 of its merge step
+panics on the customers without a region, and must fail the same way in
+all three attempts, which shows that each new attempt got the customers,
+a side input, again. The failed attempt must be kept with all of them for
+a replay. Then the flow runs again with version 2, at debug level, and
+every order must be joined, with a warning for each blank region.
 
 testcase11 to testcase14 also check the reason code each failure gets.
 See [When a run fails](/docs/debugging/).

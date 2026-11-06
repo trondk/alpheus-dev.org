@@ -1,0 +1,9 @@
+{{- /* A screenshot from static/, scaled to the column, with its size so the
+       page does not jump while it loads:
+       {{< screenshot src="/docs/debug-example/ui-run.png" width="1100" height="1415" alt="…" caption="…" >}} */ -}}
+<figure class="shot">
+  <img src="{{ .Get "src" }}" width="{{ .Get "width" }}" height="{{ .Get "height" }}" alt="{{ .Get "alt" }}" loading="lazy" decoding="async">
+  {{- with .Get "caption" }}
+  <figcaption>{{ . }}</figcaption>
+  {{- end }}
+</figure>

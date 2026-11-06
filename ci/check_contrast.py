@@ -10,7 +10,7 @@ import sys
 
 CSS = sys.argv[1] if len(sys.argv) > 1 else "themes/alpheus/assets/css/main.css"
 
-TEXT = ["text", "groundwater", "spring", "sediment"]
+TEXT = ["text", "groundwater", "spring", "sediment", "alarm"]
 # (foreground, background, minimum ratio, why)
 PAIRS = [(fg, bg, 4.5, "text") for fg in TEXT for bg in ("bg", "surface")] + [
     ("horizon", "bg", 3.0, "graphics, WCAG 1.4.11"),
