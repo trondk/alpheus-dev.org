@@ -43,8 +43,10 @@ from envtest, which `make test` downloads the first time.
 {{< repolink "vagrant/" >}} sets up a two-node Kubernetes cluster on
 Talos Linux in two local VMs, a control plane that also runs workloads
 and a worker, with the services the end-to-end tests need. It uses Vagrant with the libvirt provider, so you need libvirt
-and KVM, the vagrant-libvirt plugin, `talosctl`, `kubectl` and, for the
-end-to-end tests, `helm` and `podman`.
+and KVM, the vagrant-libvirt plugin, `talosctl`, `kubectl`, `helm` and,
+for the end-to-end tests, `podman`. The cluster's network is Cilium
+instead of Talos' default flannel, because flannel ignores
+NetworkPolicies and every run gets one.
 
 ```console
 $ cd vagrant
@@ -341,6 +343,14 @@ result or stops with a reason that says what went wrong:
   run has finished, all 30 are kept in the bucket, the bad chunk first,
   and `alpheus replay --skipped` fetches them. See
   [Bad records and bad chunks](/docs/dead-letters/).
+
+testcase20 checks what a run can reach. Its source tries the Kubernetes
+API, Garage's admin port and the registry before it writes: the run's
+NetworkPolicy must block all three, and the run must still succeed, since
+the storage and the signal hub are let through. Then the test adds a
+policy of its own that lets the source reach the registry, and a second
+run must reach it and still not the other two. See
+[What a run can reach](/docs/isolation/).
 
 testcase11 to testcase14 also check the reason code each failure gets.
 See [When a run fails](/docs/debugging/).
