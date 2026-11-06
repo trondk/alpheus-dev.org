@@ -1,0 +1,61 @@
+{{- /* One pod of a run up close, in the same language as how-it-works:
+       what is in it, what it is given and what it reaches
+       (/docs/kubernetes/, SPEC 6.2). */ -}}
+<figure class="k8s">
+  <svg viewBox="0 0 440 440" role="img" aria-labelledby="k8s-pod-title k8s-pod-desc">
+    <title id="k8s-pod-title">One pod of a run, up close</title>
+    <desc id="k8s-pod-desc">In the namespace flows, the pod k8s-doc-grep-0-1 is named after the run, the step, the replica and the attempt. It holds two containers: the component, from the step's image, and the agent, as a native sidecar. They share an emptyDir at /run/alpheus with the socket and the scratch files. The pod has restartPolicy Never and a ServiceAccount without a token. Only the agent gets the Secrets: alpheus-s3 with the S3 keys and the pod's own signal Secret with a certificate for this attempt. A NetworkPolicy lets the pod reach only DNS, the storage and the signal hub. The agent sends signals to the signal hub in the alpheus-controller over mutual TLS, and moves chunks, manifests and acks to and from object storage below the ground line.</desc>
+
+    <rect class="box" x="208" y="8" width="220" height="48" rx="6"/>
+    <text class="label strong" x="318" y="29">alpheus-controller</text>
+    <text class="note" x="318" y="47">signal hub, in alpheus-system</text>
+
+    <rect class="frame" x="4" y="68" width="432" height="290" rx="10"/>
+    <text class="note start" x="16" y="88">namespace flows</text>
+
+    <rect class="frame" x="16" y="98" width="288" height="250" rx="8"/>
+    <text class="label mono start" x="28" y="121">k8s-doc-grep-0-1</text>
+    <text class="note start" x="28" y="139">run, step, replica, attempt</text>
+
+    <rect class="box" x="28" y="152" width="124" height="64" rx="4"/>
+    <text class="label strong" x="90" y="179">component</text>
+    <text class="note" x="90" y="199">the step's image</text>
+
+    <rect class="box" x="168" y="152" width="124" height="64" rx="4"/>
+    <text class="label strong" x="230" y="179">agent</text>
+    <text class="note" x="230" y="199">native sidecar</text>
+
+    <rect class="inner" x="28" y="244" width="242" height="52" rx="4"/>
+    <text class="label mono" x="149" y="266">/run/alpheus</text>
+    <text class="note" x="149" y="285">emptyDir: socket, scratch files</text>
+    <path class="ctl" d="M90 216 V244 M230 216 V244"/>
+
+    <text class="note start" x="28" y="321">restartPolicy: Never</text>
+    <text class="note start" x="28" y="338">ServiceAccount without a token</text>
+
+    <text class="note" x="374" y="140">agent only</text>
+    <rect class="box" x="320" y="152" width="108" height="52" rx="4"/>
+    <text class="label mono" x="374" y="174">alpheus-s3</text>
+    <text class="note" x="374" y="193">S3 keys</text>
+    <rect class="box" x="320" y="224" width="108" height="52" rx="4"/>
+    <text class="label mono" x="374" y="246">…-signal</text>
+    <text class="note" x="374" y="265">this attempt</text>
+    <path class="ctl" d="M320 178 H300 M320 250 H310 V200 H300"/>
+    <path class="head-ctl" d="M300 173 L292 178 L300 183 Z M300 195 L292 200 L300 205 Z"/>
+
+    <rect class="box" x="320" y="296" width="108" height="52" rx="4"/>
+    <text class="label" x="374" y="318">NetworkPolicy</text>
+    <text class="note" x="374" y="337">fences the pod</text>
+    <path class="ctl" d="M320 322 H304"/>
+
+    <path class="sig" d="M262 152 V56"/>
+    <text class="note start" x="268" y="86">signals, mTLS</text>
+
+    <rect class="ground" x="0" y="376" width="440" height="64"/>
+    <line class="horizon" x1="0" y1="376" x2="440" y2="376"/>
+    <path class="data" d="M282 216 V376"/>
+    <text class="label" x="220" y="404">object storage (S3)</text>
+    <text class="note" x="220" y="424">chunks, manifests and acks</text>
+  </svg>
+  <figcaption>One replica of the step grep, in its first attempt. The component only sees files in /run/alpheus; the agent moves them through object storage with keys the component never gets.</figcaption>
+</figure>

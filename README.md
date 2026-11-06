@@ -14,6 +14,11 @@ hugo server                   # preview on http://localhost:1313/
 hugo --gc --minify            # build to public/
 ```
 
+Or all in one: `./localwww.sh` serves the site on
+http://localhost:1313/ with the pinned Hugo, which it downloads to
+`.cache/` the first time, and fetches the docs from `../alpheus` again
+whenever they change there.
+
 Hugo is pinned to v0.168.0 (WWW-21).
 
 | What | Where |

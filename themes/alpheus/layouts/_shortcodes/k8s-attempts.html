@@ -1,0 +1,35 @@
+{{- /* How the controller replaces a failed attempt, and why that is not a
+       Job (/docs/kubernetes/, SPEC 6.2, GO-67). */ -}}
+<figure class="k8s">
+  <svg viewBox="0 0 440 264" role="img" aria-labelledby="k8s-attempts-title k8s-attempts-desc">
+    <title id="k8s-attempts-title">How a failed attempt is replaced</title>
+    <desc id="k8s-attempts-desc">Four boxes, one under the other. First, the pod k8s-doc-grep-0-1, attempt 1, fails or its node goes away. Second, the controller keeps the end of its logs in S3. Third, the controller waits until the pod is gone: deleted, or every container stopped. Fourth, the pod k8s-doc-grep-0-2 starts as attempt 2, with a new certificate and a higher epoch. On the left, a dashed arrow goes straight from the first box to the fourth: a Job would start the new pod at once, so there might be two writers.</desc>
+
+    <rect class="box" x="120" y="16" width="304" height="44" rx="4"/>
+    <text class="label mono start" x="132" y="35">k8s-doc-grep-0-1</text>
+    <text class="note start" x="132" y="52">attempt 1 fails, or its node goes away</text>
+
+    <rect class="box" x="120" y="80" width="304" height="44" rx="4"/>
+    <text class="label start" x="132" y="99">The controller keeps its logs</text>
+    <text class="note start" x="132" y="116">the end of each log, in S3</text>
+
+    <rect class="box" x="120" y="144" width="304" height="44" rx="4"/>
+    <text class="label start" x="132" y="163">… and waits until it is gone</text>
+    <text class="note start" x="132" y="180">deleted, or every container stopped</text>
+
+    <rect class="box" x="120" y="208" width="304" height="44" rx="4"/>
+    <text class="label mono start" x="132" y="227">k8s-doc-grep-0-2</text>
+    <text class="note start" x="132" y="244">attempt 2, new certificate and epoch</text>
+
+    <path class="ctl" d="M272 60 V74 M272 124 V138 M272 188 V202"/>
+    <path class="head-ctl" d="M267 72 L272 80 L277 72 Z M267 136 L272 144 L277 136 Z M267 200 L272 208 L277 200 Z"/>
+
+    <path class="sig" d="M120 38 H104 V230 H112"/>
+    <path class="head-ctl" d="M112 225 L120 230 L112 235 Z"/>
+    <text class="note start" x="12" y="114">a Job starts</text>
+    <text class="note start" x="12" y="130">it at once:</text>
+    <text class="note start" x="12" y="146">maybe two</text>
+    <text class="note start" x="12" y="162">writers</text>
+  </svg>
+  <figcaption>The controller, not Kubernetes, decides when the next attempt starts, so a replica has one writer at a time.</figcaption>
+</figure>

@@ -6,3 +6,5 @@ resources/
 /content/docs/
 /content/security.md
 __pycache__/
+# Hugo for localwww.sh.
+/.cache/
