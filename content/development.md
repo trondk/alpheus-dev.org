@@ -19,6 +19,8 @@ also needs [buf](https://buf.build/docs/installation).
 | `make generate` | Writes the CRD, deepcopy functions, RBAC role and gRPC code from their sources |
 | `make check-generated` | Fails when generated code is not up to date |
 | `make vet` | Runs `go vet` |
+| `make lint` | Runs golangci-lint with `.golangci.yml`, at the version pinned in `hack/golangci-lint.mod` |
+| `make ci` | Runs vet, lint, check-generated, check-deps and test, and fails on any finding |
 | `make check-deps` | Fails if Alpheus depends on Parquet or Arrow; it never reads a chunk's content |
 | `make test` | Runs every test with the race detector |
 | `make test-chart` | Lints the Helm chart and checks what it renders; needs [Helm](https://helm.sh/docs/intro/install/) but no cluster |
