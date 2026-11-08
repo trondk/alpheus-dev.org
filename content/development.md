@@ -61,7 +61,7 @@ $ ./destroy.sh --clean      # and the earlier test reports, benchmarks and logs
 |---|---|---|
 | Garage | S3-compatible storage: chunks in `alpheus-data`, results in `alpheus-results` | `https://<VM IP>:30900` |
 | garage-ui | Garage's dashboard | `https://<VM IP>:30901` |
-| Zot | Container registry for the test images | `https://registry.alpheus.test:30500` |
+| Zot | Container registry for the test images | `https://<VM IP>:30500`, or `https://registry.alpheus.test:30500` with the `/etc/hosts` line `credentials.sh` prints |
 | HAProxy | HTTPS in front of the three | |
 
 `deploy.sh` makes a test CA, and Talos trusts it, so the cluster pulls
@@ -381,8 +381,8 @@ with this commit's chart, also when the test fails.
 
 {{< repolink "hack/release.sh" >}} builds a release of the tagged commit
 into `_out/release/<version>/`: the `alpheus` CLI for Linux and macOS on
-amd64 and arm64, the agent and controller images for `linux/amd64` and
-`linux/arm64`, the Helm chart with the images' digests in it, an SPDX SBOM
+amd64 and arm64, the agent, controller and UI images for `linux/amd64`
+and `linux/arm64`, the Helm chart with the images' digests in it, an SPDX SBOM
 for every binary and image, and `SHA256SUMS`. It pushes the images and the
 chart to the registry, and signs them and `SHA256SUMS` with the project's
 cosign key, attaching each image's SBOM to it.
