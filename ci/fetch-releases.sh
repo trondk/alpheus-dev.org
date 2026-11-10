@@ -19,8 +19,9 @@ if [[ -z $src ]]; then
   url=${RELEASES_URL:-https://alpheus-dev.org/releases}
   src=$(mktemp -d)
   trap 'rm -rf "$src"' EXIT
+  # No tags yet is not an error: grep then finds nothing.
   git ls-remote --tags --refs "$repo" 'v*' | sed 's|.*refs/tags/||' |
-    grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' | while read -r v; do
+    { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || true; } | while read -r v; do
     mkdir -p "$src/$v"
     if curl -fsSL -o "$src/$v/RELEASE-NOTES.md" "$url/$v/RELEASE-NOTES.md"; then
       curl -fsSL -o "$src/$v/SHA256SUMS" "$url/$v/SHA256SUMS" || rm -f "$src/$v/SHA256SUMS"
