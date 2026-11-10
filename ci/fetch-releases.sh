@@ -13,6 +13,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# REPO_TOKEN, when set, is sent to the repository, for a Forgejo that
+# only lets signed-in users read.
+git_auth=()
+if [[ -n ${REPO_TOKEN:-} ]]; then
+  git_auth=(-c "http.extraHeader=Authorization: basic $(printf 'x-access-token:%s' "$REPO_TOKEN" | base64 -w0)")
+fi
+
 src=${1:-}
 if [[ -z $src ]]; then
   repo=${REPO:-$(sed -n 's/^ *repo = "\(.*\)"/\1/p' hugo.toml)}
@@ -20,7 +27,7 @@ if [[ -z $src ]]; then
   src=$(mktemp -d)
   trap 'rm -rf "$src"' EXIT
   # No tags yet is not an error: grep then finds nothing.
-  git ls-remote --tags --refs "$repo" 'v*' | sed 's|.*refs/tags/||' |
+  git "${git_auth[@]}" ls-remote --tags --refs "$repo" 'v*' | sed 's|.*refs/tags/||' |
     { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || true; } | while read -r v; do
     mkdir -p "$src/$v"
     if curl -fsSL -o "$src/$v/RELEASE-NOTES.md" "$url/$v/RELEASE-NOTES.md"; then

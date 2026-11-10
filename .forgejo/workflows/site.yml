@@ -8,6 +8,7 @@
 #   variable DEPLOY_TARGET        rsync target, e.g. deploy@web.example:/srv/alpheus-dev.org/
 #   variable GO_MODULE_PUBLISHED  "true" once the Go module has code (WWW-20)
 #   variable ALPHEUS_REPO         the main repository to fetch docs/ from; default params.repo
+#   secret   ALPHEUS_REPO_TOKEN   a token that may read it, if reading needs one; default the job's own token
 
 name: Site
 
@@ -44,11 +45,14 @@ jobs:
         env:
           REPO: ${{ vars.ALPHEUS_REPO }}
           REF: ${{ inputs.ref || 'main' }}
+          # For a Forgejo that only lets signed-in users read.
+          REPO_TOKEN: ${{ secrets.ALPHEUS_REPO_TOKEN || github.token }}
 
       - name: Make the release pages from the releases' notes (WWW-53)
         run: ci/fetch-releases.sh
         env:
           REPO: ${{ vars.ALPHEUS_REPO }}
+          REPO_TOKEN: ${{ secrets.ALPHEUS_REPO_TOKEN || github.token }}
 
       - name: Install Chromium, rsync and ssh
         run: |

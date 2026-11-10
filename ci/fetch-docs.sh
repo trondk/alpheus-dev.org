@@ -7,16 +7,23 @@
 # Usage: ci/fetch-docs.sh [checkout]
 #   With a path to a checkout of the main repository, copies its docs/.
 #   Without one, clones REPO (default: params.repo in hugo.toml) at REF
-#   (default: main).
+#   (default: main), with REPO_TOKEN if it is set.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# REPO_TOKEN, when set, is sent to the repository, for a Forgejo that
+# only lets signed-in users read.
+git_auth=()
+if [[ -n ${REPO_TOKEN:-} ]]; then
+  git_auth=(-c "http.extraHeader=Authorization: basic $(printf 'x-access-token:%s' "$REPO_TOKEN" | base64 -w0)")
+fi
 
 src=${1:-}
 if [[ -z $src ]]; then
   repo=${REPO:-$(sed -n 's/^ *repo = "\(.*\)"/\1/p' hugo.toml)}
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
-  git clone --quiet --depth 1 --branch "${REF:-main}" "$repo" "$work/alpheus"
+  git "${git_auth[@]}" clone --quiet --depth 1 --branch "${REF:-main}" "$repo" "$work/alpheus"
   src=$work/alpheus
 fi
 if [[ ! -f $src/docs/_index.md ]]; then
