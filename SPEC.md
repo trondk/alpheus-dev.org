@@ -283,7 +283,7 @@ Status 2026-11-10: WWW-54 og WWW-55 er bygget. Arbejdsgangene i hovedrepo'et har
 | WWW-31 | SKAL | Siden opfylder WCAG 2.1 AA: semantisk HTML, synligt tastaturfokus, alt-tekst, korrekt overskriftshierarki og "spring til indhold"-link. |
 | WWW-32 | SKAL | Alt kan bruges med tastatur alene, også navigation og søgning. |
 | WWW-33 | SKAL | Siden kan vises i 320 CSS-pixels bredde (svarende til 400 % zoom, WCAG 1.4.10) uden vandret scroll i brødteksten. Kodeblokke og tabeller må scrolle inden for deres egen boks. |
-| WWW-34 | SKAL | En automatisk tilgængelighedstest (axe) kører i CI på forsiden og en dokumentationsside. |
+| WWW-34 | SKAL | En automatisk tilgængelighedstest (axe) kører i CI på forsiden og en dokumentationsside. Tegningerne (`.k8s svg`) er skjult for testen: axe kan ikke finde baggrunden bag tekst i SVG og melder den som "needs review", som pa11y-ci tæller som fejl. Tegningerne har `role="img"` og en tekstbeskrivelse (WWW-13) og bruger kun paletten, hvis kombinationer `ci/check_contrast.py` kontrollerer (WWW-9, WWW-41). |
 
 
 ## 9. Domæne og hosting
