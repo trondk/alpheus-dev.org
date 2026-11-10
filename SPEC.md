@@ -51,12 +51,14 @@ saglig, konkret og uden salgssprog.
   etl/                    Flagskibet, ETL af store filer on-prem: gennemgang og målinger (findes)
   debugging/              Når et run fejler: årsagskoder, events, gemte logs, genkørsel, alpheus ui og metrics (findes)
   verify/                 Kontrollér en udgivelse med projektets nøgle (findes)
+  tests/                  Alle automatiske tests, hvad de kontrollerer, og hvornår de består; genereret fra testenes doc-kommentarer (findes)
+  changes/                Ændringer pr. version, genereret fra CHANGELOG.md (findes, WWW-52)
   operations/             Drift på Kubernetes og Talos, metrics, sikkerhed
   protocol/               Chunk-protokollen i detaljer
 /development/             Udvikling og test: byg, tests og testklyngen i Vagrant
 /about/                   Om projektet: historien, governance, licens, kontakt
 /security/                Sådan rapporteres sårbarheder (genereres fra SECURITY.md)
-/releases/                Udgivelser og release notes (genereres fra udgivelserne på Forgejo)
+/releases/                Udgivelser og release notes, genereret fra hver udgivelses RELEASE-NOTES.md (findes, WWW-53)
 /privacy/                 Privatliv (se afsnit 7)
 /alpheus/                 Vanity import for Go-modulet (se afsnit 5)
 ```
@@ -68,9 +70,13 @@ saglig, konkret og uden salgssprog.
 | WWW-5 | SKAL | Hver dokumentationsside har et "Edit this page"-link til kilden i det primære repo på Forgejo, ikke i spejlet. |
 | WWW-6 | BØR | Søgning i dokumentationen kører helt i browseren (fx Pagefind), uden en ekstern søgetjeneste. |
 | WWW-50 | SKAL | `/idea/` holder projektet på kurs: en kort beskrivelse af problemet, målet, hvad Alpheus ikke er, og hvornår det er færdigt, og en blyantsskitse af idéen. Skitsen laves af `sketch/idea.py` til `assets/idea-sketch.svg` og vises inline med `role="img"`, titel og beskrivelse, så teksten står i sidens egen skrift; teksten under den siger det samme. Den er et ark papir i begge temaer. "Idea" står først i topmenuen. |
+| WWW-52 | SKAL | `/docs/changes/` viser hovedrepo'ets `CHANGELOG.md`, som `make generate` dér kopierer til `docs/changes.md` med front matter. Unreleased-sektionen står i `{{% planned %}}` og er markeret "Not released yet", da `docs/` beskriver `main`. Siden står i dokumentationens oversigt og som "Changes" i sidefoden. |
+| WWW-53 | SKAL | `/releases/` lister alle udgivne versioner, nyeste først, og `/releases/vX.Y.Z/` viser versionens `RELEASE-NOTES.md` (versionens sektion af `CHANGELOG.md`, som `hack/release.sh` lægger blandt udgivelsens filer), dens filer efter `SHA256SUMS`, og hvor længe den får sikkerhedsrettelser efter `SECURITY.md`'s "Supported versions" med link til `/security/` (hovedrepo'ets GO-134). `ci/fetch-releases.sh` henter de to filer for hvert `vX.Y.Z`-tag fra projektets egen webserver og laver siderne med `ci/release_pages.py`; med en mappe af udgivelser, fx `_out/release`, bruges den i stedet. "Releases" står i sidefoden, når der er en udgivelse. |
 | WWW-51 | SKAL | `/ui/` viser, hvordan `alpheus ui` ser ud, som en blyantsskitse lavet af `sketch/ui.py` til `assets/ui-sketch.svg`, med shortcoden `sketch` og samme krav som skitsen i WWW-50. Skitsen står også på `/idea/`. "UI" står i topmenuen efter "Idea". Begge skitser tegnes med `sketch/pencil.py`. |
 
 Status 2026-10-31: før første udgivelse ligger dokumentationen direkte under `/docs/` med en tydelig markering af, at den beskriver koden på `main`. Versionering efter WWW-3 (`/docs/v0.1/`, `/docs/dev/`) kommer med `v0.1.0`. `/docs/` viser en liste over siderne (temaets `section.html`).
+
+Status 2026-11-10: WWW-52 og WWW-53 er bygget. `/docs/changes/` og `/docs/tests/` står i oversigten; release-siderne er prøvet med en testudgivelse og flere versioner, men ingen version er udgivet endnu, så `/releases/` findes ikke på siden før den første.
 
 
 ## 3. Indhold på forsiden
@@ -248,12 +254,16 @@ gennem proxy.golang.org, som har dem i sin cache.
 | WWW-21 | SKAL | Siden bygges med Hugo (statisk, en enkelt Go-binær). Hugo-versionen fastlåses i CI. |
 | WWW-22 | SKAL | Siden ligger i repo'et `alpheus-dev/alpheus-dev.org` på Forgejo. Dokumentationens kilde ligger i `docs/` i hovedrepo'et og hentes ind ved byg (fra `main` og fra hvert release-tag, se WWW-3), så dokumentation og kode ændres i samme pull request. |
 | WWW-23 | SKAL | Forgejo Actions bygger og udgiver til projektets egen webserver ved push til `main` i begge repo'er og ved hver udgivelse af Alpheus. Hovedrepo'et udløser bygget via Forgejos API med en token, der kun har adgang til netop det ene repo. Udgivelsen sker med rsync over SSH med en nøgle, der kun kan skrive i sidens mappe på serveren. |
+| WWW-54 | SKAL | Et push til hovedrepo'ets `main`, der ændrer `docs/` eller `CHANGELOG.md`, og hvert nyt `vX.Y.Z`-tag udløser et nyt byg af siden. Hovedrepo'ets `.forgejo/workflows/site-docs.yml` og `site-release.yml` kører på projektets egne Forgejo-runners og starter sidens `site.yml` med `POST /api/v1/repos/<site>/actions/workflows/site.yml/dispatches` (Forgejo 8 eller nyere) og en token fra en bruger, der kun må skrive i sidens repo (WWW-23). Ingen tjenester uden for EU indgår. Et tag skubbes, før `hack/release.sh` kører, så den, der lægger udgivelsens filer på serveren, starter samme byg igen bagefter; ellers kommer versionen med i det næste byg. rsync sletter ikke udgivelsernes filer under `/releases/`, da de ikke bygges her. |
+| WWW-55 | SKAL | CI kontrollerer, at intet link eller ressource på den byggede side er brudt (`ci/check_links.py`). Links til andre sider følges ikke. Et link fra en udgivelses side til en fil i dens mappe tæller, når siden findes, da serveren har filerne. |
 | WWW-44 | SKAL | Spejlene på GitHub opdateres automatisk fra Forgejo og kører ingen workflows. Issues, pull requests og Actions er slået fra, og beskrivelsen peger på det primære repo. |
 | WWW-24 | SKAL | Siden virker fuldt ud uden JavaScript. JavaScript bruges kun til søgning og kopier-knapper på kodeblokke. Menuen på telefoner bygges med `<details>`/`<summary>`, og kopier-knapper indsættes af scriptet, så de ikke står døde uden JavaScript. |
 | WWW-43 | SKAL | Hver side har en Content-Security-Policy som `<meta http-equiv>`, så den også gælder i forhåndsvisninger, og webserveren sender samme politik som header med `frame-ancestors 'none'` tilføjet (se afsnit 9). Politikken tillader kun ressourcer fra siden selv: `default-src 'self'`, `script-src 'self' 'wasm-unsafe-eval'` (Pagefind bruger WebAssembly), ingen `'unsafe-inline'`. Hugo sættes op med `markup.highlight.noClasses = false`, så syntaksfremhævning bruger klasser i stedet for inline styles. |
 | WWW-25 | SKAL | Ingen eksterne ressourcer: ingen CDN'er, scripts, skrifter, billeder eller iframes fra andre domæner. |
 | WWW-26 | SKAL | Forsiden vejer under 150 KB samlet ved første indlæsning, inklusive skrifter. |
 | WWW-27 | BØR | Lighthouse-score på mindst 95 i alle kategorier, kontrolleret i CI. |
+
+Status 2026-11-10: WWW-54 og WWW-55 er bygget. Arbejdsgangene i hovedrepo'et har ikke kørt endnu, da Forgejo-instansen ikke er sat op (adressen er ikke besluttet); de kræver hemmeligheden `SITE_DISPATCH_TOKEN`. Linkkontrollen finder ingen brudte links i det lokale byg.
 
 
 ## 7. Privatliv og GDPR

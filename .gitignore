@@ -5,6 +5,8 @@ resources/
 # Fetched from the main repository by ci/fetch-docs.sh (WWW-22).
 /content/docs/
 /content/security.md
+# Made by ci/fetch-releases.sh from the releases' files.
+/content/releases/
 __pycache__/
 # Hugo for localwww.sh.
 /.cache/

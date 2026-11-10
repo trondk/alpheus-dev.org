@@ -105,6 +105,10 @@ with the `registry` value set to Zot and the images pinned by digest.
 Then it runs the tests in {{< repolink "test/e2e/" >}} as ordinary Go
 tests against the cluster.
 
+[Tests](/docs/tests/) lists every test, the end-to-end testcases and the
+unit tests, with what each checks and what it takes to pass. The first
+three testcases are described here in more detail.
+
 The first test case, testcase01, is simple, and also shows how the
 system performs. Three steps run the test component `bench`:
 

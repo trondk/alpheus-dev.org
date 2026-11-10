@@ -15,7 +15,9 @@ on:
   push:
     branches: [main]
   pull_request:
-  # The main repository triggers this through the Forgejo API on push and release (WWW-23).
+  # The main repository's .forgejo/workflows/site-docs.yml and site-release.yml
+  # start this through Forgejo's API when docs/ or CHANGELOG.md changes on main,
+  # and for every vX.Y.Z tag (WWW-23, WWW-54).
   workflow_dispatch:
     inputs:
       ref:
@@ -43,6 +45,11 @@ jobs:
           REPO: ${{ vars.ALPHEUS_REPO }}
           REF: ${{ inputs.ref || 'main' }}
 
+      - name: Make the release pages from the releases' notes (WWW-53)
+        run: ci/fetch-releases.sh
+        env:
+          REPO: ${{ vars.ALPHEUS_REPO }}
+
       - name: Install Chromium, rsync and ssh
         run: |
           apt-get update
@@ -63,6 +70,9 @@ jobs:
 
       - name: Check external resources and front page weight (WWW-25, WWW-26)
         run: python3 -I ci/check_site.py
+
+      - name: Check that no link is broken (WWW-55)
+        run: python3 -I ci/check_links.py
 
       - name: Accessibility test with axe (WWW-34)
         run: |
@@ -90,7 +100,9 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          rsync -rlz --checksum --delete-after \
+          # The releases' files are uploaded with each release, not built
+          # here: --delete-after leaves them alone.
+          rsync -rlz --checksum --delete-after --filter='P /releases/**' \
             -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes" \
             public/ "$DEPLOY_TARGET"
         env:

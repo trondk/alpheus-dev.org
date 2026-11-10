@@ -67,6 +67,14 @@ enableRobotsTXT = true
     url = "/about/#governance"
     weight = 20
   [[menus.footer]]
+    name = "Changes"
+    url = "/docs/changes/"
+    weight = 24
+  [[menus.footer]]
+    name = "Releases"
+    url = "/releases/"
+    weight = 26
+  [[menus.footer]]
     name = "Security"
     url = "/security/"
     weight = 30
