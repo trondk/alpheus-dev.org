@@ -97,8 +97,10 @@ jobs:
         run: |
           echo "packages=$(python3 -I -c 'import tomllib; print(" ".join(tomllib.load(open("data/gopackages.toml", "rb"))["packages"]))')" >> "$GITHUB_OUTPUT"
 
+      # Only where a web server is set up; a Forgejo without one only builds
+      # and checks the site.
       - name: Publish to the web server (WWW-23)
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DEPLOY_TARGET != ''
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
@@ -116,7 +118,7 @@ jobs:
 
   verify:
     needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DEPLOY_TARGET != ''
     runs-on: docker
     container:
       image: golang:1-bookworm
